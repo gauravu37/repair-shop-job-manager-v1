@@ -44,6 +44,7 @@ register_activation_hook(__FILE__, function () {
         delivery_date DATE,
         status VARCHAR(20),
 		payment_method VARCHAR(20),
+		advance DECIMAL(10,2),
 		paid_amount DECIMAL(10,2),
 		pending_amount DECIMAL(10,2),
         payment_mode VARCHAR(20),
@@ -61,6 +62,15 @@ register_activation_hook(__FILE__, function () {
         problem TEXT,
         replacement TINYINT,
         replacement_sku VARCHAR(100)
+    ) $charset;");
+	
+	dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+	    job_id INT,
+	    amount DECIMAL(10,2),
+	    method VARCHAR(20),
+	    note VARCHAR(255),
+	    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) $charset;");
 });
 
@@ -131,6 +141,18 @@ add_action('admin_menu', function () {
 	 'rsjm-jobs','Analytics','Analytics','manage_options','rsjm-analytics',
 	 function(){ include RSJM_PATH.'views/analytics.php'; }
 	);
+	
+	add_submenu_page(
+		null,
+		'Customer Job View',
+		'Customer Job View',
+		'read',
+		'rsjm-customer-job',
+		function(){
+			include RSJM_PATH.'views/customer-job.php';
+		}
+	);
+
 
 
 });
@@ -139,72 +161,164 @@ add_action('admin_menu', function () {
 /* ---------------- SAVE JOB ---------------- */
 
 add_action('admin_init', function () {
-    if (!isset($_POST['rsjm_save_job'])) return;
 
     global $wpdb;
-	
-	
-	if(isset($_POST['rsjm_update_items'])){
-		foreach($_POST['qty'] as $id=>$qty){
-			$wpdb->update(
-				$wpdb->prefix.'rsjm_job_items',
-				[
-					'qty'=>$qty,
-					'price'=>$_POST['price'][$id],
-					'total'=>$qty*$_POST['price'][$id]
-				],
-				['id'=>$id]
+
+    /* =====================================
+       1️⃣ SAVE NEW JOB
+    ===================================== */
+    if (isset($_POST['rsjm_save_job'])) {
+
+        $subtotal = array_sum($_POST['total']);
+        $gst_percent = floatval($_POST['gst_percent']);
+        $gst_type = $_POST['gst_type'];
+
+        $cgst = $sgst = $igst = 0;
+
+        if ($gst_type === 'cgst_sgst') {
+            $cgst = $sgst = ($subtotal * $gst_percent / 100) / 2;
+        } elseif ($gst_type === 'igst') {
+            $igst = ($subtotal * $gst_percent / 100);
+        }
+
+        $total = $subtotal + $cgst + $sgst + $igst;
+
+        $advance = floatval($_POST['advance'] ?? 0);
+        //$paid = $advance;
+        //$pending = $total - $paid;
+        //if ($pending < 0) $pending = 0;
+
+       // $status = $pending > 0 ? 'partial' : 'completed';
+
+        /*$wpdb->insert($wpdb->prefix.'rsjm_jobs', [
+
+            'customer_id' => intval($_POST['customer_id']),
+            'subtotal' => $subtotal,
+            'gst_type' => $gst_type,
+            'cgst' => $cgst,
+            'sgst' => $sgst,
+            'igst' => $igst,
+            'total' => $total,
+            'advance' => $advance,
+            'paid_amount' => $paid,
+            'pending_amount' => $pending,
+            'status' => $status,
+            'delivery_date' => $_POST['delivery_date']
+        ]);*/
+		
+		$wpdb->insert($wpdb->prefix.'rsjm_jobs', [
+
+			'customer_id' => intval($_POST['customer_id']),
+			'subtotal' => $subtotal,
+			'gst_type' => $gst_type,
+			'cgst' => $cgst,
+			'sgst' => $sgst,
+			'igst' => $igst,
+			'total' => $total,
+			'advance' => $advance,
+			'paid_amount' => 0,
+			'pending_amount' => $total,
+			'status' => 'pending',
+			'delivery_date' => $_POST['delivery_date']
+		]);
+
+        $job_id = $wpdb->insert_id;
+
+        /* Save advance in history */
+        if ($advance > 0) {
+			//rsjm_add_payment($job_id, $advance, 'Advance', 'Advance payment at booking');
+			rsjm_add_payment(
+				$job_id,
+				$advance,
+				'Advance',
+				'Advance payment at booking',
+				current_time('mysql')
 			);
+			
 		}
-}
 
+        foreach ($_POST['item_id'] as $k => $item_id) {
 
-    $subtotal = array_sum($_POST['total']);
-    $gst_percent = floatval($_POST['gst_percent']);
-    $gst_type = $_POST['gst_type'];
+            $wpdb->insert($wpdb->prefix.'rsjm_job_items', [
+                'job_id' => $job_id,
+                'item_id' => $item_id,
+                'sku' => $_POST['sku'][$k],
+                'qty' => $_POST['qty'][$k],
+                'price' => $_POST['price'][$k],
+                'total' => $_POST['total'][$k],
+                'problem' => $_POST['problem'][$k],
+                'replacement' => isset($_POST['replacement'][$k]) ? 1 : 0,
+                'replacement_sku' => $_POST['replacement_sku'][$k]
+            ]);
+        }
 
-    $cgst = $sgst = $igst = 0;
-    if ($gst_type === 'cgst_sgst') {
-        $cgst = $sgst = ($subtotal * $gst_percent / 100) / 2;
-    } elseif ($gst_type === 'igst') {
-        $igst = ($subtotal * $gst_percent / 100);
+        rsjm_send_email($job_id);
+        rsjm_notify_status_change($job_id);
+
+        wp_redirect(admin_url('admin.php?page=rsjm-jobs'));
+        exit;
     }
 
-    $total = $subtotal + $cgst + $sgst + $igst;
 
-    $wpdb->insert($wpdb->prefix.'rsjm_jobs', [
-        'customer_id' => intval($_POST['customer_id']),
-        'subtotal' => $subtotal,
-        'gst_type' => $gst_type,
-        'cgst' => $cgst,
-        'sgst' => $sgst,
-        'igst' => $igst,
-        'total' => $total,
-        'delivery_date' => $_POST['delivery_date'],
-        'status' => 'pending'
-    ]);
+    /* =====================================
+       2️⃣ ADD PAYMENT
+    ===================================== */
+    if (isset($_POST['rsjm_add_payment'])) {
 
-    $job_id = $wpdb->insert_id;
+        if (
+            !isset($_POST['rsjm_nonce']) ||
+            !wp_verify_nonce($_POST['rsjm_nonce'],'rsjm_add_payment')
+        ) {
+            wp_die('Security check failed');
+        }
 
-    foreach ($_POST['item_id'] as $k => $item_id) {
-        $wpdb->insert($wpdb->prefix.'rsjm_job_items', [
+        $job_id = intval($_POST['job_id']);
+        $amount = floatval($_POST['pay_amount']);
+        $method = sanitize_text_field($_POST['pay_method']);
+        $note   = sanitize_text_field($_POST['pay_note']);
+
+        if ($amount <= 0) {
+            wp_die('Invalid amount');
+        }
+
+
+		$date = sanitize_text_field($_POST['pay_date']);
+		rsjm_add_payment($job_id, $amount, $method, $note, $date);
+        // Insert payment history
+        /*$wpdb->insert($wpdb->prefix.'rsjm_payments', [
             'job_id' => $job_id,
-            'item_id' => $item_id,
-            'sku' => $_POST['sku'][$k],
-            'qty' => $_POST['qty'][$k],
-            'price' => $_POST['price'][$k],
-            'total' => $_POST['total'][$k],
-            'problem' => $_POST['problem'][$k],
-            'replacement' => isset($_POST['replacement'][$k]) ? 1 : 0,
-            'replacement_sku' => $_POST['replacement_sku'][$k]
-        ]);
+            'amount' => $amount,
+            'method' => $method,
+            'note'   => $note,
+            'created_at' => current_time('mysql')
+        ]);*/
+
+        // Get job
+        $job = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d",
+                $job_id
+            )
+        );
+
+        $new_paid = $job->paid_amount + $amount;
+        $new_pending = $job->total - $new_paid;
+        if ($new_pending < 0) $new_pending = 0;
+
+        $new_status = $new_pending > 0 ? 'partial' : 'completed';
+
+        $wpdb->update($wpdb->prefix.'rsjm_jobs', [
+            'paid_amount'    => $new_paid,
+            'pending_amount' => $new_pending,
+            'status'         => $new_status
+        ], ['id'=>$job_id]);
+
+        rsjm_notify_status_change($job_id);
+
+        wp_redirect(admin_url("admin.php?page=rsjm-view-job&job_id=$job_id"));
+        exit;
     }
 
-    rsjm_send_email($job_id);
-    rsjm_send_whatsapp($job_id);
-
-    wp_redirect(admin_url('admin.php?page=rsjm-jobs'));
-    exit;
 });
 
 /* ---------------- PDF ---------------- */
@@ -267,7 +381,22 @@ function rsjm_send_whatsapp($job_id) {
     ]);
 }
 
+function waha_send($job_id) {
+    global $wpdb;
+    $job = $wpdb->get_row("SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=$job_id");
+    $user = get_user_by('id', $job->customer_id);
 
+    $text = "Repair Job #$job_id\nTotal: ₹{$job->total}\nStatus: {$job->status}";
+    $chatId = "91{$user->user_login}@c.us";
+
+	$url = get_option('rsjm_waha_url').'/api/sendText';
+	$key = '64c00ca10cd44cdd801c8faa4ed5c41d';
+	
+	$payload = ['chatId'=>$chatId,'text'=>$text,'session'=>'default'];
+	$args = ['body'=>wp_json_encode($payload),'headers'=>['Content-Type'=>'application/json','x-api-key'=>$key],'timeout'=>20];
+	$resp = wp_remote_post($url,$args);
+	if (is_wp_error($resp)) error_log('CampRegister WAHA error: '.$resp->get_error_message());
+}
 
 
 add_action('admin_init', function () {
@@ -314,53 +443,91 @@ add_action('admin_init', function () {
 
 
 
-function rsjm_notify_status_change($job_id) {
+function rsjm_notify_status_change($job_id){
+
     global $wpdb;
 
-    $job = $wpdb->get_row("SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=$job_id");
-    $user = get_user_by('id', $job->customer_id);
-
-    $msg = "";
-    if ($job->status === 'in_progress') {
-        $msg = "Your repair job #$job_id is now IN PROGRESS.";
-    }
-
-    if ($job->status === 'completed') {
-        if ($job->payment_mode === 'upi') {
-            $upi = get_option('rsjm_upi');
-            $link = "upi://pay?pa=$upi&pn=RepairShop&am={$job->total}";
-            $msg = "Your job #$job_id is completed.\nAmount: ₹{$job->total}\nPay via UPI:\n$link";
-        } else {
-            $msg = "Your job #$job_id is completed.\nAmount: ₹{$job->total}\nPayment Mode: Cash";
-        }
-    }
-	
-	if ($job->status === 'ready') {
-		$msg = "Your job #$job_id is ready.\nAmount: ₹{$job->total}\nPay here:\n".site_url("/pay-job/?job=$job_id");
-	}
-
-	if ($job->status === 'partial') {
-		$msg = "Partial payment received.\nPaid: ₹{$job->paid_amount}\nPending: ₹{$job->pending_amount}";
-	}
-
-
-    // Email
-    wp_mail(
-        $user->user_email,
-        "Job Update #$job_id",
-        $msg
+    $job = $wpdb->get_row(
+        "SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=$job_id"
     );
 
-    // WhatsApp
-    wp_remote_post(get_option('rsjm_waha_url').'/sendText', [
-        'headers' => ['Content-Type'=>'application/json'],
+    if(!$job) return;
+
+    $user = get_user_by('id', $job->customer_id);
+
+    if(!$user) return;
+
+
+    /* GET TEMPLATE */
+    switch($job->status){
+
+        case 'pending':
+            $tpl = get_option('rsjm_msg_pending');
+            break;
+
+        case 'in_progress':
+            $tpl = get_option('rsjm_msg_progress');
+            break;
+
+        case 'ready':
+            $tpl = get_option('rsjm_msg_ready');
+            break;
+
+        case 'completed':
+            $tpl = get_option('rsjm_msg_completed');
+            break;
+
+        case 'partial':
+            $tpl = get_option('rsjm_msg_partial');
+            break;
+
+        default:
+            return;
+    }
+
+
+    if(empty($tpl)) return;
+
+
+    /* PARSE TAGS */
+    $message = rsjm_parse_message($tpl, $job);
+
+
+    /* SEND WHATSAPP */
+    $phone = preg_replace('/[^0-9]/','',$user->user_login);
+
+    $url     = get_option('rsjm_waha_url').'/api/sendText';
+    $session = get_option('rsjm_waha_session');
+
+
+    if(!$url || !$session) return;
+	
+	$key = '64c00ca10cd44cdd801c8faa4ed5c41d';
+	$chatId = "91{$user->user_login}@c.us";
+	$payload = ['chatId'=>$chatId,'text'=>$message,'session'=>'default'];
+	$args = ['body'=>wp_json_encode($payload),'headers'=>['Content-Type'=>'application/json','x-api-key'=>$key],'timeout'=>20];
+	$resp = wp_remote_post($url,$args);
+
+
+    /*wp_remote_post($url.'/sendText', [
+
+        'headers' => [
+            'Content-Type' => 'application/json'
+        ],
+
         'body' => json_encode([
-            'session' => get_option('rsjm_waha_session'),
-            'chatId' => "91{$user->user_login}@c.us",
-            'text' => $msg
+
+            'session' => $session,
+
+            'chatId'  => "91{$phone}@c.us",
+
+            'text'    => $message
+
         ])
-    ]);
+
+    ]);*/
 }
+
 
 
 add_shortcode('repair_job_status', function () {
@@ -438,3 +605,433 @@ add_action('admin_enqueue_scripts', function () {
 add_action('wp_enqueue_scripts', function () {
     wp_enqueue_style('rsjm-style', RSJM_URL.'assets/style.css');
 });
+
+add_action('admin_enqueue_scripts', function($hook){
+
+    // Only load on our settings page
+    if ($hook !== 'repair-jobs_page_rsjm-settings') return;
+
+    wp_enqueue_media();
+    wp_enqueue_script('jquery');
+});
+
+
+add_action('admin_init', function () {
+
+    if (!isset($_POST['rsjm_edit_items'])) return;
+
+    if (
+        !isset($_POST['rsjm_nonce']) ||
+        !wp_verify_nonce($_POST['rsjm_nonce'],'rsjm_edit_items')
+    ) {
+        wp_die('Security error');
+    }
+
+    global $wpdb;
+    $job_id = intval($_POST['job_id']);
+
+    // Remove items
+    if (!empty($_POST['remove'])) {
+        foreach($_POST['remove'] as $remove_id){
+            $wpdb->delete($wpdb->prefix.'rsjm_job_items',['id'=>intval($remove_id)]);
+        }
+    }
+
+    // Update items
+    $subtotal = 0;
+    foreach($_POST['qty'] as $id=>$qty){
+        $price = $_POST['price'][$id];
+        $total = $qty * $price;
+
+        $wpdb->update(
+            $wpdb->prefix.'rsjm_job_items',
+            [
+                'qty'=>$qty,
+                'price'=>$price,
+                'total'=>$total
+            ],
+            ['id'=>intval($id)]
+        );
+
+        $subtotal += $total;
+    }
+
+    // Recalculate job total (keep existing GST)
+    $job = $wpdb->get_row("SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=$job_id");
+
+    $grand = $subtotal + $job->cgst + $job->sgst + $job->igst;
+
+    $wpdb->update(
+        $wpdb->prefix.'rsjm_jobs',
+        [
+            'subtotal'=>$subtotal,
+            'total'=>$grand
+        ],
+        ['id'=>$job_id]
+    );
+
+    wp_redirect(admin_url('admin.php?page=rsjm-view-job&job_id='.$job_id.'&updated=1'));
+    exit;
+});
+
+
+
+register_activation_hook(__FILE__, function(){
+
+    if(!get_option('rsjm_msg_pending')){
+        update_option('rsjm_msg_pending',
+"Hello {customer_name},
+
+Your job #{job_id} is pending.
+
+View status:
+{job_link}
+");
+    }
+
+    if(!get_option('rsjm_msg_progress')){
+        update_option('rsjm_msg_progress',
+"Hello {customer_name},
+
+Your job #{job_id} is in progress.
+
+Track here:
+{job_link}
+");
+    }
+
+    if(!get_option('rsjm_msg_ready')){
+        update_option('rsjm_msg_ready',
+"Hello {customer_name},
+
+Your job #{job_id} is ready.
+
+Amount: ₹{total}
+
+Pay here:
+{upi_link}
+
+Details:
+{job_link}
+");
+    }
+
+    if(!get_option('rsjm_msg_completed')){
+        update_option('rsjm_msg_completed',
+"Hello {customer_name},
+
+Your job #{job_id} is completed.
+
+Total Paid: ₹{total}
+
+Receipt:
+{job_link}
+");
+    }
+
+    if(!get_option('rsjm_msg_partial')){
+        update_option('rsjm_msg_partial',
+"Hello {customer_name},
+
+Partial payment received.
+
+Paid: ₹{paid}
+Pending: ₹{pending}
+
+Details:
+{job_link}
+");
+    }
+
+});
+
+
+function rsjm_parse_message($template, $job){
+
+    $user = get_user_by('id', $job->customer_id);
+
+    // Customer public link
+    $job_link = rsjm_customer_job_link($job->id);
+
+    // UPI Link (if ready/completed)
+    $upi = get_option('rsjm_upi');
+
+    $upi_link = '';
+    if($upi){
+        $upi_link = "upi://pay?pa={$upi}&pn=RepairShop&am={$job->total}&cu=INR";
+    }
+	
+	$fin = rsjm_get_job_financials($job->id);
+
+
+    $tags = [
+
+        '{job_id}'        => $job->id,
+
+        '{customer_name}' => $user ? $user->display_name : '',
+
+        '{status}'        => ucfirst($job->status),
+
+        '{total}'         => number_format($job->total,2),
+
+        //'{paid}'          => number_format($job->paid_amount ?? 0,2),
+
+        //'{pending}'       => number_format($job->pending_amount ?? 0,2),
+		
+		'{paid}' => number_format($fin['paid'],2),
+		'{pending}' => number_format($fin['pending'],2),
+
+        '{job_link}'      => $job_link,
+
+        '{upi_link}'      => $upi_link,
+		
+		'{advance}' => number_format($job->advance,2),
+    ];
+
+    return str_replace(
+        array_keys($tags),
+        array_values($tags),
+        $template
+    );
+}
+
+
+
+function rsjm_customer_job_link($job_id){
+    $token = md5($job_id . NONCE_SALT);
+    return site_url("/view-job/?job=$job_id&token=$token");
+}
+
+
+
+add_shortcode('rsjm_customer_job', function(){
+
+    if (!isset($_GET['job'], $_GET['token'])) {
+        return '<p>Invalid job link.</p>';
+    }
+
+    global $wpdb;
+
+    $job_id = intval($_GET['job']);
+    $token  = sanitize_text_field($_GET['token']);
+
+    if (md5($job_id . NONCE_SALT) !== $token) {
+        return '<p>Unauthorized access.</p>';
+    }
+
+    $job = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d",
+            $job_id
+        )
+    );
+
+    if (!$job) return '<p>Job not found.</p>';
+
+    $items = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}rsjm_job_items WHERE job_id=%d",
+            $job_id
+        )
+    );
+
+    $user = get_user_by('id', $job->customer_id);
+
+    $shop_name = get_option('rsjm_shop_name');
+    $shop_addr = get_option('rsjm_shop_address');
+    $gst_no    = get_option('rsjm_gst_no');
+    //$logo_url  = wp_get_attachment_url(get_option('rsjm_shop_logo'));
+    $upi_id    = get_option('rsjm_upi');
+	
+	$logo_id     = get_option('rsjm_shop_logo');
+	$logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
+
+    $amount = in_array($job->status, ['ready','completed','partial'])
+        ? $job->total
+        : $job->subtotal;
+
+    $upi_link = "upi://pay?pa={$upi_id}&pn=" . urlencode($shop_name) .
+                "&am={$amount}&cu=INR";
+
+    ob_start();
+    ?>
+	<style>
+		header, footer {
+			display: none;
+		}
+	</style>
+    <div style="max-width:600px;margin:auto;font-family:system-ui">
+
+        <div style="text-align:center;margin-bottom:20px">
+            <?php 
+			if($logo_url): ?>
+                <img src="<?=esc_url($logo_url)?>" style="max-height:60px"><br>
+            <?php endif; ?>
+            <strong><?=esc_html($shop_name)?></strong><br>
+            <small><?=nl2br(esc_html($shop_addr))?></small><br>
+            <?php if($gst_no): ?>
+                <small>GST: <?=esc_html($gst_no)?></small>
+            <?php endif; ?>
+        </div>
+
+        <div style="background:#fff;padding:15px;border-radius:10px">
+            <p><strong>Customer:</strong> <?=esc_html($user->display_name)?></p>
+            <p><strong>Status:</strong> <?=ucfirst($job->status)?></p>
+
+            <table width="100%" cellpadding="6">
+                <tr><th align="left">Item</th><th>Qty</th><th>Total</th></tr>
+                <?php foreach($items as $i): ?>
+                <tr>
+                    <td><?=esc_html($i->sku)?></td>
+                    <td align="center"><?=$i->qty?></td>
+                    <td align="right">₹<?=number_format($i->total,2)?></td>
+                </tr>
+                <?php endforeach; ?>
+            </table>
+
+            <h2 style="text-align:right">
+                ₹<?=number_format($amount,2)?>
+            </h2>
+
+            <?php if($job->status === 'ready'): ?>
+            <a href="<?=esc_url($upi_link)?>"
+               style="display:block;background:#16a34a;color:#fff;
+                      text-align:center;padding:14px;border-radius:10px;
+                      font-size:18px;text-decoration:none">
+                Pay ₹<?=number_format($amount,2)?> Now
+            </a>
+            <?php endif; ?>
+        </div>
+
+    </div>
+    <?php
+    return ob_get_clean();
+});
+
+function rsjm_sync_job_payments($job_id){
+
+    global $wpdb;
+
+    $job = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT total FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d",
+            $job_id
+        )
+    );
+
+    if(!$job) return;
+
+    $paid = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT SUM(amount) FROM {$wpdb->prefix}rsjm_payments WHERE job_id=%d",
+            $job_id
+        )
+    );
+
+    $paid = $paid ? floatval($paid) : 0;
+
+    $pending = $job->total - $paid;
+    if($pending < 0) $pending = 0;
+
+    $status = $pending > 0 ? 'partial' : 'completed';
+
+    $wpdb->update(
+        $wpdb->prefix.'rsjm_jobs',
+        [
+            //'paid_amount'    => $paid,
+            //'pending_amount' => $pending,
+            'status'         => $status
+        ],
+        ['id'=>$job_id]
+    );
+}
+
+
+function rsjm_add_payment($job_id,$amount,$method,$note='',$date=null){
+
+    global $wpdb;
+
+    if($amount <= 0) return false;
+
+    // If no date passed, use today
+    if(!$date){
+        $date = current_time('mysql');
+    } else {
+        $date = date('Y-m-d H:i:s', strtotime($date));
+    }
+
+    $wpdb->insert($wpdb->prefix.'rsjm_payments',[
+        'job_id'=>$job_id,
+        'amount'=>$amount,
+        'method'=>$method,
+        'note'=>$note,
+        'created_at'=>$date
+    ]);
+
+    rsjm_sync_job_payments($job_id);
+	
+	rsjm_auto_update_status($job_id);
+
+    return true;
+}
+
+
+function rsjm_get_job_financials($job_id){
+
+    global $wpdb;
+
+    $job = $wpdb->get_row(
+        $wpdb->prepare(
+            "SELECT total FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d",
+            $job_id
+        )
+    );
+
+    if(!$job){
+        return [
+            'total'=>0,
+            'paid'=>0,
+            'pending'=>0,
+            'percent'=>0
+        ];
+    }
+
+    $total = floatval($job->total);
+
+    $paid = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT SUM(amount) FROM {$wpdb->prefix}rsjm_payments WHERE job_id=%d",
+            $job_id
+        )
+    );
+
+    $paid = $paid ? floatval($paid) : 0;
+
+    $pending = $total - $paid;
+    if($pending < 0) $pending = 0;
+
+    $percent = $total > 0 ? ($paid / $total) * 100 : 0;
+
+    return [
+        'total'=>$total,
+        'paid'=>$paid,
+        'pending'=>$pending,
+        'percent'=>$percent
+    ];
+}
+
+
+function rsjm_auto_update_status($job_id){
+
+    global $wpdb;
+
+    $fin = rsjm_get_job_financials($job_id);
+
+    $status = $fin['pending'] > 0 ? 'partial' : 'completed';
+
+    $wpdb->update(
+        $wpdb->prefix.'rsjm_jobs',
+        ['status'=>$status],
+        ['id'=>$job_id]
+    );
+}

@@ -48,6 +48,7 @@ register_activation_hook(__FILE__, function () {
 		paid_amount DECIMAL(10,2),
 		pending_amount DECIMAL(10,2),
         payment_mode VARCHAR(20),
+		redeem_discount DECIMAL(10,2) DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) $charset;");
 
@@ -72,6 +73,16 @@ register_activation_hook(__FILE__, function () {
 	    note VARCHAR(255),
 	    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) $charset;");
+	
+	dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_points (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		customer_id BIGINT,
+		job_id INT,
+		points INT,
+		type VARCHAR(20), -- earn / redeem / manual
+		note VARCHAR(255),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) $charset;");
 });
 
 /* ---------------- ADMIN MENU ---------------- */
@@ -181,7 +192,32 @@ add_action('admin_init', function () {
             $igst = ($subtotal * $gst_percent / 100);
         }
 
-        $total = $subtotal + $cgst + $sgst + $igst;
+        $raw_total = $subtotal + $cgst + $sgst + $igst;
+
+		$redeem_points = intval($_POST['redeem_points'] ?? 0);
+		$redeem_discount = $redeem_points; // 1 point = ₹1
+
+		if($redeem_discount > $raw_total){
+			$redeem_discount = $raw_total;
+		}
+
+		$total = $raw_total - $redeem_discount;
+		
+		/* ===============================
+		   APPLY REDEEM DISCOUNT
+		=============================== */
+
+		$redeem = intval($_POST['redeem_points'] ?? 0);
+		$available = rsjm_get_customer_points(intval($_POST['customer_id']));
+
+		if($redeem > $available){
+			$redeem = $available;
+		}
+
+		if($redeem > 0){
+			$total = $total - $redeem;
+			if($total < 0) $total = 0;
+		}
 
         $advance = floatval($_POST['advance'] ?? 0);
         //$paid = $advance;
@@ -215,6 +251,7 @@ add_action('admin_init', function () {
 			'sgst' => $sgst,
 			'igst' => $igst,
 			'total' => $total,
+			'redeem_discount' => $redeem_discount,   // ADD THIS
 			'advance' => $advance,
 			'paid_amount' => 0,
 			'pending_amount' => $total,
@@ -223,6 +260,29 @@ add_action('admin_init', function () {
 		]);
 
         $job_id = $wpdb->insert_id;
+		
+		/* ===============================
+		   SAVE REDEEM POINTS
+		=============================== */
+
+		$redeem = intval($_POST['redeem_points'] ?? 0);
+		$available = rsjm_get_customer_points(intval($_POST['customer_id']));
+
+		if($redeem > $available){
+			$redeem = $available;
+		}
+
+		if($redeem > 0){
+
+			$wpdb->insert($wpdb->prefix.'rsjm_points',[
+				'customer_id' => intval($_POST['customer_id']),
+				'job_id'      => $job_id,
+				'points'      => $redeem,
+				'type'        => 'redeem',
+				'note'        => "Redeemed in Job #$job_id",
+				'created_at'  => current_time('mysql')
+			]);
+		}
 
         /* Save advance in history */
         if ($advance > 0) {
@@ -423,11 +483,23 @@ add_action('admin_init', function () {
         $data['total'] = floatval($_POST['ready_amount']);
     }
 
-    if (in_array($status,['completed','partial'])) {
+    /*if (in_array($status,['completed','partial'])) {
         $data['payment_method'] = sanitize_text_field($_POST['payment_method']);
         $data['paid_amount'] = floatval($_POST['paid_amount']);
         $data['pending_amount'] = floatval($_POST['pending_amount']);
-    }
+    }*/
+	
+	if (in_array($status,['completed','partial'])) {
+
+		$method = sanitize_text_field($_POST['payment_method']);
+		$amount = floatval($_POST['paid_amount']);
+		$note   = "Payment via status update";
+
+		if($amount > 0){
+			rsjm_add_payment($job_id, $amount, $method, $note);
+		}
+
+	}
 
     $wpdb->update(
         $wpdb->prefix.'rsjm_jobs',
@@ -436,6 +508,9 @@ add_action('admin_init', function () {
     );
 
     rsjm_notify_status_change($job_id);
+	
+	rsjm_sync_job_payments($job_id);
+	rsjm_auto_update_status($job_id);
 
     wp_redirect(admin_url('admin.php?page=rsjm-view-job&job_id='.$job_id.'&updated=1'));
     exit;
@@ -1034,4 +1109,93 @@ function rsjm_auto_update_status($job_id){
         ['status'=>$status],
         ['id'=>$job_id]
     );
+
+    /* ===============================
+       EARN POINTS WHEN COMPLETED
+    =============================== */
+
+    if($status === 'completed'){
+
+        // Get job data
+        $job = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT customer_id, total FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d",
+                $job_id
+            )
+        );
+
+        if(!$job) return;
+
+        // Prevent duplicate earning
+        $already = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}rsjm_points 
+                 WHERE job_id=%d AND type='earn'",
+                 $job_id
+            )
+        );
+
+        if($already > 0) return;
+
+        $points = floor($job->total / 100); // 1 point per ₹100
+
+        if($points > 0){
+            $wpdb->insert($wpdb->prefix.'rsjm_points',[
+                'customer_id'=>$job->customer_id,
+                'job_id'=>$job_id,
+                'points'=>$points,
+                'type'=>'earn',
+                'note'=>"Earned from Job #$job_id",
+                'created_at'=>current_time('mysql')
+            ]);
+        }
+    }
 }
+
+
+
+function rsjm_get_customer_points($customer_id){
+
+    global $wpdb;
+
+    $earned = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT IFNULL(SUM(points),0)
+             FROM {$wpdb->prefix}rsjm_points
+             WHERE customer_id=%d AND type='earn'",
+             $customer_id
+        )
+    );
+
+    $redeemed = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT IFNULL(SUM(points),0)
+             FROM {$wpdb->prefix}rsjm_points
+             WHERE customer_id=%d AND type='redeem'",
+             $customer_id
+        )
+    );
+
+    return intval($earned - $redeemed);
+}
+
+
+
+/* ===============================
+   AJAX: GET CUSTOMER POINTS
+=============================== */
+
+add_action('wp_ajax_rsjm_get_points', function(){
+
+    if(!isset($_POST['customer_id'])){
+        wp_send_json_error();
+    }
+
+    $customer_id = intval($_POST['customer_id']);
+
+    $points = rsjm_get_customer_points($customer_id);
+
+    wp_send_json_success([
+        'points' => $points
+    ]);
+});

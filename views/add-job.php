@@ -27,7 +27,17 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
         </select>
     </div>
 
+	<div class="rsjm-field">
+		<label>Available Points</label>
+		<input type="text" id="rsjm-available-points" readonly value="0">
+	</div>
+
+	<div class="rsjm-field">
+		<label>Redeem Points</label>
+		<input type="number" name="redeem_points" id="rsjm-redeem-points" min="0" value="0">
+	</div>
 </div>
+
 
 
 <!-- ITEMS -->
@@ -138,6 +148,28 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
 </div>
 
 </div>
+
+<?php
+$current_points = rsjm_get_customer_points($_POST['customer_id'] ?? 0);
+?>
+<!--
+<div class="rsjm-card">
+    <h3>Use Reward Points</h3>
+
+    <div class="rsjm-field">
+        <label>Available Points</label>
+        <input value="<?=$current_points?>" readonly>
+    </div>
+
+    <div class="rsjm-field">
+        <label>Redeem Points</label>
+        <input type="number"
+               name="redeem_points"
+               value="0"
+               min="0"
+               oninput="calculateTotals()">
+    </div>
+</div>-->
 
 
 <input type="hidden" name="rsjm_save_job" value="1">
@@ -300,63 +332,121 @@ function calculateTotals() {
         subtotal += parseFloat(el.value || 0);
     });
 
-    document.getElementById('rsjm-subtotal').value =
-        subtotal.toFixed(2);
+    document.getElementById('rsjm-subtotal').value = subtotal.toFixed(2);
 
-
-    let gstType =
-        document.getElementById('rsjm-gst-type').value;
-
-    let gstPercent =
-        parseFloat(document.getElementById('rsjm-gst-percent').value || 0);
-
+    let gstType = document.getElementById('rsjm-gst-type').value;
+    let gstPercent = parseFloat(document.getElementById('rsjm-gst-percent').value || 0);
 
     let cgst = 0, sgst = 0, igst = 0;
-
 
     document.getElementById('cgst-box').style.display = 'none';
     document.getElementById('sgst-box').style.display = 'none';
     document.getElementById('igst-box').style.display = 'none';
 
-
     if (gstType === 'cgst_sgst') {
-
         cgst = sgst = (subtotal * gstPercent / 100) / 2;
-
         document.getElementById('cgst-box').style.display = 'block';
         document.getElementById('sgst-box').style.display = 'block';
     }
 
-
     if (gstType === 'igst') {
-
         igst = subtotal * gstPercent / 100;
-
         document.getElementById('igst-box').style.display = 'block';
     }
-
 
     document.getElementById('rsjm-cgst').value = cgst.toFixed(2);
     document.getElementById('rsjm-sgst').value = sgst.toFixed(2);
     document.getElementById('rsjm-igst').value = igst.toFixed(2);
 
+    let grand = subtotal + cgst + sgst + igst;
 
-    //let grand = subtotal + cgst + sgst + igst;
-	let advance = parseFloat(
-		document.querySelector('[name="advance"]')?.value || 0
-	);
+    // APPLY REDEEM
+    let redeem = parseFloat(document.getElementById('rsjm-redeem-points')?.value || 0);
 
-	let grand = subtotal + cgst + sgst + igst;
-
-	let pending = grand - advance;
-
-	if (pending < 0) pending = 0;
-
-	document.getElementById('rsjm-pending-preview').value =
-		pending.toFixed(2);
-
-		document.getElementById('rsjm-grand-total').value =
-			grand.toFixed(2);
+    if (redeem > grand) {
+        redeem = grand;
+        document.getElementById('rsjm-redeem-points').value = grand;
+    }
+	
+	// Show redeem discount
+	let redeemDisplay = document.getElementById('rsjm-redeem-display');
+	if(redeemDisplay){
+		redeemDisplay.value = redeem.toFixed(2);
 	}
+
+    grand = grand - redeem;
+
+    if (grand < 0) grand = 0;
+
+    document.getElementById('rsjm-grand-total').value = grand.toFixed(2);
+
+    // APPLY ADVANCE
+    let advance = parseFloat(document.querySelector('[name="advance"]')?.value || 0);
+
+    let pending = grand - advance;
+    if (pending < 0) pending = 0;
+
+    document.getElementById('rsjm-pending-preview').value = pending.toFixed(2);
+}
+	
+	
+	
+	
+	document.addEventListener("DOMContentLoaded", function(){
+
+		const customerSelect = document.querySelector('[name="customer_id"]');
+		const availableField = document.getElementById('rsjm-available-points');
+		const redeemField    = document.getElementById('rsjm-redeem-points');
+
+		if(customerSelect){
+
+			customerSelect.addEventListener('change', function(){
+
+				let customerId = this.value;
+
+				if(!customerId){
+					availableField.value = 0;
+					return;
+				}
+
+				fetch(ajaxurl, {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/x-www-form-urlencoded"
+					},
+					body: new URLSearchParams({
+						action: 'rsjm_get_points',
+						customer_id: customerId
+					})
+				})
+				.then(res => res.json())
+				.then(data => {
+					if(data.success){
+						availableField.value = data.data.points;
+					} else {
+						availableField.value = 0;
+					}
+				});
+
+			});
+
+		}
+
+		if(redeemField){
+			redeemField.addEventListener('input', function(){
+
+				let max = parseInt(availableField.value) || 0;
+
+				if(parseInt(this.value) > max){
+					this.value = max;
+				}
+
+				calculateTotals();
+			});
+		}
+
+	});
+	
+	
 
 </script>

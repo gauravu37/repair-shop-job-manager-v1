@@ -160,6 +160,10 @@ $advance = $advance ? floatval($advance) : 0;
             <?=round($paid_percent)?>% Paid
         </div>
     </div>
+	
+	
+	
+	
 
     <!-- BREAKDOWN GRID -->
     <div class="rsjm-breakdown-grid">
@@ -173,6 +177,11 @@ $advance = $advance ? floatval($advance) : 0;
             <span>Paid</span>
             <strong>₹<?=number_format($paid,2)?></strong>
         </div>
+		
+		<div class="rsjm-break-item paid">
+			<small>Redeem Discount</small>
+			<strong>₹<?=number_format($job->redeem_discount,2)?></strong>
+		</div>
 
         <div class="rsjm-break-item pending">
             <span>Pending</span>

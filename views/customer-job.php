@@ -123,7 +123,10 @@ h2,h3 { margin:0 0 10px }
 <div class="card">
 <h3>Customer</h3>
 <p><?php echo esc_html($user->display_name); ?></p>
+<p><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=CUST-<?=$user->ID?>"></p>
 </div>
+
+
 
 <div class="card">
 <h3>Status</h3>

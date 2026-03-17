@@ -517,7 +517,6 @@ add_action('admin_init', function () {
 });
 
 
-
 function rsjm_notify_status_change($job_id){
 
     global $wpdb;
@@ -529,78 +528,152 @@ function rsjm_notify_status_change($job_id){
     if(!$job) return;
 
     $user = get_user_by('id', $job->customer_id);
-
     if(!$user) return;
-
 
     /* GET TEMPLATE */
     switch($job->status){
-
         case 'pending':
             $tpl = get_option('rsjm_msg_pending');
             break;
-
         case 'in_progress':
             $tpl = get_option('rsjm_msg_progress');
             break;
-
         case 'ready':
             $tpl = get_option('rsjm_msg_ready');
             break;
-
         case 'completed':
             $tpl = get_option('rsjm_msg_completed');
             break;
-
         case 'partial':
             $tpl = get_option('rsjm_msg_partial');
             break;
-
         default:
             return;
     }
 
-
     if(empty($tpl)) return;
-
 
     /* PARSE TAGS */
     $message = rsjm_parse_message($tpl, $job);
+	
+	
+	$items = $wpdb->get_results(
+		$wpdb->prepare(
+			"SELECT ji.*, i.name 
+			 FROM {$wpdb->prefix}rsjm_job_items ji
+			 LEFT JOIN {$wpdb->prefix}rsjm_items i 
+			 ON ji.item_id = i.id
+			 WHERE ji.job_id = %d",
+			$job_id
+		),
+		ARRAY_A
+	);
+	
+	
+	$items_array = [];
 
+	if(!empty($items)){
+		foreach($items as $item){
 
-    /* SEND WHATSAPP */
+			$qty   = floatval($item['qty']);
+			$price = floatval($item['price']);
+			$total = floatval($item['total']);
+
+			// fallback
+			if(!$total){
+				$total = $qty * $price;
+			}
+
+			$items_array[] = [
+				'name'  => $item['name'] ?? 'Item',
+				'qty'   => $qty,
+				'price' => $price,
+				'total' => $total
+			];
+		}
+	}
+
+    /* ==============================
+       🔗 GENERATE PUBLIC LINK
+    ============================== */
+
+    $api_url = "https://prontoinfosys.net/api/save-job.php";
+
+	$attachment_id = get_option('rsjm_shop_logo'); // Replace with your actual image ID
+    $image_size = 'full';
+	$image_url = wp_get_attachment_image_url( $attachment_id, $image_size );
+    $data = [
+        'job_id' => $job->id,
+        'name'   => $user->display_name,
+        'phone'  => $user->user_login,
+        'status' => $job->status,
+        'amount' => $job->total ?? 0,
+        'time'   => time(),
+		'logo' => $image_url,
+		'shop_name' => get_option('rsjm_shop_name'),
+		'shop_address' => get_option('rsjm_shop_address'),
+		'shop_phone' => get_option('rsjm_shop_phone'),
+		'items' => $items_array,
+		'subtotal' => $job->subtotal,
+		'advance' => $job->advance,
+		'pending' => $job->pending,
+		'total' => $job->total,
+    ];
+
+    $response = wp_remote_post($api_url, [
+        'body' => json_encode($data),
+        'headers' => ['Content-Type' => 'application/json'],
+        'timeout' => 15
+    ]);
+
+    if(!is_wp_error($response)){
+        $res = json_decode(wp_remote_retrieve_body($response), true);
+
+        if(!empty($res['token'])){
+            $link = "https://prontoinfosys.net/api/view.php?id=".$res['token'];
+
+            // Append link in message
+            $message .= "\n\nView Details: ".$link;
+        }
+    }
+
+    /* ==============================
+       📲 SEND WHATSAPP
+    ============================== */
+
     $phone = preg_replace('/[^0-9]/','',$user->user_login);
 
     $url     = get_option('rsjm_waha_url').'/api/sendText';
     $session = get_option('rsjm_waha_session');
+    $key     = get_option('rsjm_waha_key');
 
-    if(!$url || !$session) return;
-	
-	$key = get_option('rsjm_waha_key');
-	$chatId = "91{$user->user_login}@c.us";
-	$payload = ['chatId'=>$chatId,'text'=>$message,'session'=>'default'];
-	$args = ['body'=>wp_json_encode($payload),'headers'=>['Content-Type'=>'application/json','x-api-key'=>$key],'timeout'=>20];
-	$resp = wp_remote_post($url,$args);
+    if(!$url || !$session || !$key) return;
 
-	
-    /*wp_remote_post($url.'/sendText', [
+    $chatId = "91{$phone}@c.us";
 
+    $payload = [
+        'chatId' => $chatId,
+        'text'   => $message,
+        'session'=> 'default'
+    ];
+
+    $args = [
+        'body' => wp_json_encode($payload),
         'headers' => [
-            'Content-Type' => 'application/json'
+            'Content-Type' => 'application/json',
+            'X-API-Key'    => $key
         ],
+        'timeout' => 20
+    ];
 
-        'body' => json_encode([
+    $resp = wp_remote_post($url, $args);
 
-            'session' => $session,
-
-            'chatId'  => "91{$phone}@c.us",
-
-            'text'    => $message
-
-        ])
-
-    ]);*/
+    // Optional debug
+    if(is_wp_error($resp)){
+        error_log("WAHA Error: ".$resp->get_error_message());
+    }
 }
+
 
 
 

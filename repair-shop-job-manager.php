@@ -450,7 +450,7 @@ function waha_send($job_id) {
     $chatId = "91{$user->user_login}@c.us";
 
 	$url = get_option('rsjm_waha_url').'/api/sendText';
-	$key = '64c00ca10cd44cdd801c8faa4ed5c41d';
+	$key = '3373a66655894ec4b874a97175ca79d4';
 	
 	$payload = ['chatId'=>$chatId,'text'=>$text,'session'=>'default'];
 	$args = ['body'=>wp_json_encode($payload),'headers'=>['Content-Type'=>'application/json','x-api-key'=>$key],'timeout'=>20];
@@ -574,16 +574,15 @@ function rsjm_notify_status_change($job_id){
     $url     = get_option('rsjm_waha_url').'/api/sendText';
     $session = get_option('rsjm_waha_session');
 
-
     if(!$url || !$session) return;
 	
-	$key = '64c00ca10cd44cdd801c8faa4ed5c41d';
+	$key = get_option('rsjm_waha_key');
 	$chatId = "91{$user->user_login}@c.us";
 	$payload = ['chatId'=>$chatId,'text'=>$message,'session'=>'default'];
 	$args = ['body'=>wp_json_encode($payload),'headers'=>['Content-Type'=>'application/json','x-api-key'=>$key],'timeout'=>20];
 	$resp = wp_remote_post($url,$args);
 
-
+	
     /*wp_remote_post($url.'/sendText', [
 
         'headers' => [

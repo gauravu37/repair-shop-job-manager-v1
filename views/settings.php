@@ -19,6 +19,7 @@ if (isset($_POST['rsjm_save_settings'])) {
 
     update_option('rsjm_waha_url', esc_url_raw($_POST['waha_url']));
     update_option('rsjm_waha_session', sanitize_text_field($_POST['waha_session']));
+	update_option('rsjm_waha_key', sanitize_text_field($_POST['waha_key']));
 
     update_option('rsjm_shop_logo', intval($_POST['shop_logo']));
 	
@@ -40,6 +41,7 @@ $gst_no      = get_option('rsjm_gst_no');
 $upi         = get_option('rsjm_upi');
 $waha_url    = get_option('rsjm_waha_url');
 $waha_sess   = get_option('rsjm_waha_session');
+$waha_key   = get_option('rsjm_waha_key');
 $logo_id     = get_option('rsjm_shop_logo');
 $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
 ?>
@@ -162,6 +164,12 @@ $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
         <label>WAHA Session</label>
         <input name="waha_session"
                value="<?php echo esc_attr($waha_sess); ?>">
+    </div>
+	
+	<div class="rsjm-field">
+        <label>WAHA Key</label>
+        <input name="waha_key"
+               value="<?php echo esc_attr($waha_key); ?>">
     </div>
 
 </div>

@@ -371,7 +371,7 @@ function calculateTotals() {
 	// Show redeem discount
 	let redeemDisplay = document.getElementById('rsjm-redeem-display');
 	if(redeemDisplay){
-		redeemDisplay.value = redeem.toFixed(2);
+		redeemDisplay.value = redeem.toFixed(2); 
 	}
 
     grand = grand - redeem;
@@ -398,6 +398,10 @@ function calculateTotals() {
 		const availableField = document.getElementById('rsjm-available-points');
 		const redeemField    = document.getElementById('rsjm-redeem-points');
 
+		function setMaxRedeem(points){
+			redeemField.max = points;
+		}
+
 		if(customerSelect){
 
 			customerSelect.addEventListener('change', function(){
@@ -406,6 +410,7 @@ function calculateTotals() {
 
 				if(!customerId){
 					availableField.value = 0;
+					setMaxRedeem(0);
 					return;
 				}
 
@@ -422,9 +427,12 @@ function calculateTotals() {
 				.then(res => res.json())
 				.then(data => {
 					if(data.success){
-						availableField.value = data.data.points;
+						let points = parseInt(data.data.points) || 0;
+						availableField.value = points;
+						setMaxRedeem(points);
 					} else {
 						availableField.value = 0;
+						setMaxRedeem(0);
 					}
 				});
 
@@ -436,9 +444,14 @@ function calculateTotals() {
 			redeemField.addEventListener('input', function(){
 
 				let max = parseInt(availableField.value) || 0;
+				let val = parseInt(this.value) || 0;
 
-				if(parseInt(this.value) > max){
+				if(val > max){
 					this.value = max;
+				}
+
+				if(val < 0){
+					this.value = 0;
 				}
 
 				calculateTotals();

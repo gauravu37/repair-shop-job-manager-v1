@@ -1367,17 +1367,82 @@ add_action('wp_ajax_rsjm_add_customer', function(){
 function rsjm_customers_page(){
 
     global $wpdb;
+	
+	if(isset($_GET['export'])){
 
-    $users = get_users();
+		header('Content-Type: text/csv');
+		header('Content-Disposition: attachment; filename="customers.csv"');
 
+		$output = fopen("php://output", "w");
+
+		fputcsv($output, ['Name','Phone','Email','Points']);
+
+		$users = get_users();
+
+		foreach($users as $u){
+			fputcsv($output, [
+				$u->display_name,
+				$u->user_login,
+				$u->user_email,
+				rsjm_get_customer_points($u->ID)
+			]);
+		}
+
+		fclose($output);
+		exit;
+	}
+	
+	if(isset($_GET['qr'])){
+
+		$id = intval($_GET['qr']);
+		$user = get_user_by('id', $id);
+
+		if(!$user) exit;
+
+		$text = "ID: {$user->ID}\nName: {$user->display_name}\nPhone: {$user->user_login}";
+
+		//$qr_url = "https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl=".urlencode($text);
+		$qr_url = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=".$user->ID;
+		
+		//$qr_url = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=".urlencode($text);
+		echo "<div style='text-align:center;margin-top:50px;'>";
+		echo "<h3>{$user->display_name}</h3>";
+		echo "<img src='$qr_url'>";
+		echo "<br><br><a href='#' onclick='window.print()'>🖨 Print</a>";
+		echo "</div>";
+		exit;
+	}
+
+    $paged = max(1, $_GET['paged'] ?? 1);
+	$per_page = 20;
+	$search = sanitize_text_field($_GET['s'] ?? '');
+
+	$args = [
+		'number' => $per_page,
+		'paged'  => $paged,
+	];
+
+	if($search){
+		$args['search'] = "*{$search}*";
+		$args['search_columns'] = ['user_login','user_email','display_name'];
+	}
+
+	$query = new WP_User_Query($args);
+	$users = $query->get_results();
+	$total = $query->get_total();
     ?>
 
     <div class="rsjm-wrap">
         <h2 class="rsjm-title">👥 Customers</h2>
-
+		<a href="?page=rsjm-customers&export=1" class="rsjm-btn rsjm-btn-success">📥 Export CSV</a>
         <div class="rsjm-card">
 
             <div class="rsjm-table-wrap">
+			<form method="get" style="margin-bottom:15px;">
+				<input type="hidden" name="page" value="rsjm-customers">
+				<input type="text" name="s" placeholder="Search name / phone / email" value="<?= esc_attr($_GET['s'] ?? '') ?>">
+				<button class="rsjm-btn">Search</button>
+			</form>
                 <table class="rsjm-table">
 
                     <thead>
@@ -1388,6 +1453,7 @@ function rsjm_customers_page(){
                             <th>Pending</th>
                             <th>Jobs</th>
                             <th>Total Spent</th>
+							<th>QR</th>
                             <th>Action</th>
                         </tr>
                     </thead>
@@ -1427,6 +1493,7 @@ function rsjm_customers_page(){
                             <td><?= intval($pending_points) ?></td>
                             <td><?= intval($jobs) ?></td>
                             <td>₹<?= number_format($spent,2) ?></td>
+							<td><a href="?page=rsjm-customers&qr=<?= $u->ID ?>" class="rsjm-btn">📱 QR</a></td>
                             <td>
                                 <a href="?page=rsjm-customer-view&id=<?= $u->ID ?>" class="rsjm-btn">
                                     View
@@ -1439,6 +1506,21 @@ function rsjm_customers_page(){
                     </tbody>
 
                 </table>
+				
+				<?php 
+					$total_pages = ceil($total / $per_page);
+
+					if($total_pages > 1){
+						echo '<div style="margin-top:15px;">';
+
+						for($i=1;$i<=$total_pages;$i++){
+							$active = ($i == $paged) ? 'style="font-weight:bold"' : '';
+							echo "<a $active href='?page=rsjm-customers&paged=$i&s=$search' style='margin-right:10px;'>$i</a>";
+						}
+
+						echo '</div>';
+					}
+				?>
             </div>
 
         </div>

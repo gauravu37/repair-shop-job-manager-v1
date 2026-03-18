@@ -164,7 +164,23 @@ add_action('admin_menu', function () {
 		}
 	);
 
-
+	add_submenu_page(
+        'rsjm-jobs',
+        'Customers',
+        'Customers',
+        'manage_options',
+        'rsjm-customers',
+        'rsjm_customers_page'
+    );
+	
+	add_submenu_page(
+		null,
+		'Customer Detail',
+		'Customer Detail',
+		'manage_options',
+		'rsjm-customer-view',
+		'rsjm_customer_detail_page'
+	);
 
 });
 
@@ -763,6 +779,33 @@ add_action('admin_enqueue_scripts', function($hook){
 });
 
 
+add_action('admin_enqueue_scripts', function($hook){
+
+    // Load only on your plugin page (optional but recommended)
+    if(isset($_GET['page']) && $_GET['page'] === 'rsjm-add-job'){
+
+        // jQuery (already available but safe)
+        wp_enqueue_script('jquery');
+
+        // Select2 CSS
+        wp_enqueue_style(
+            'select2-css',
+            'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css'
+        );
+
+        // Select2 JS
+        wp_enqueue_script(
+            'select2-js',
+            'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js',
+            ['jquery'],
+            null,
+            true
+        );
+    }
+
+});
+
+
 add_action('admin_init', function () {
 
     if (!isset($_POST['rsjm_edit_items'])) return;
@@ -1271,3 +1314,214 @@ add_action('wp_ajax_rsjm_get_points', function(){
         'points' => $points
     ]);
 });
+
+
+
+add_action('wp_ajax_rsjm_add_customer', function(){
+
+    $fname  = sanitize_text_field($_POST['fname']);
+	$lname  = sanitize_text_field($_POST['lname']);
+	
+	$name  = $fname.' '.$lname;
+    $phone = sanitize_text_field($_POST['phone']);
+    $email = sanitize_email($_POST['email']);
+    $address = sanitize_textarea_field($_POST['address']);
+
+    if(!$phone){
+        wp_send_json_error('Phone required');
+    }
+
+    // Check existing
+    $existing = get_user_by('login', $phone);
+    if($existing){
+        wp_send_json_success([
+            'id' => $existing->ID,
+            'text' => $existing->display_name . ' (' . $phone . ')'
+        ]);
+    }
+
+    $user_id = wp_insert_user([
+        'user_login' => $phone,
+        'user_pass' => wp_generate_password(),
+        'user_email' => $email ?: $phone.'@noemail.com',
+		'first_name' => $fname,
+		'last_name'  => $lname,
+        'display_name' => $name,
+        'role' => 'subscriber'
+    ]);
+
+    if(is_wp_error($user_id)){
+        wp_send_json_error($user_id->get_error_message());
+    }
+
+    update_user_meta($user_id, 'address', $address);
+
+    wp_send_json_success([
+        'id' => $user_id,
+        'text' => $name . ' (' . $phone . ')'
+    ]);
+});
+
+
+
+function rsjm_customers_page(){
+
+    global $wpdb;
+
+    $users = get_users();
+
+    ?>
+
+    <div class="rsjm-wrap">
+        <h2 class="rsjm-title">👥 Customers</h2>
+
+        <div class="rsjm-card">
+
+            <div class="rsjm-table-wrap">
+                <table class="rsjm-table">
+
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Phone</th>
+                            <th>Points</th>
+                            <th>Pending</th>
+                            <th>Jobs</th>
+                            <th>Total Spent</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                    <?php foreach($users as $u):
+
+                        // TOTAL JOBS
+                        $jobs = $wpdb->get_var(
+                            $wpdb->prepare(
+                                "SELECT COUNT(*) FROM {$wpdb->prefix}rsjm_jobs WHERE customer_id=%d",
+                                $u->ID
+                            )
+                        );
+
+                        // TOTAL SPENT
+                        $spent = $wpdb->get_var(
+                            $wpdb->prepare(
+                                "SELECT SUM(total) FROM {$wpdb->prefix}rsjm_jobs WHERE customer_id=%d",
+                                $u->ID
+                            )
+                        );
+
+                        // POINTS
+                        $points = rsjm_get_customer_points($u->ID);
+
+                        // OPTIONAL pending points logic
+                        $pending_points = 0;
+
+                    ?>
+
+                        <tr>
+                            <td><?= esc_html($u->display_name) ?></td>
+                            <td><?= esc_html($u->user_login) ?></td>
+                            <td><?= intval($points) ?></td>
+                            <td><?= intval($pending_points) ?></td>
+                            <td><?= intval($jobs) ?></td>
+                            <td>₹<?= number_format($spent,2) ?></td>
+                            <td>
+                                <a href="?page=rsjm-customer-view&id=<?= $u->ID ?>" class="rsjm-btn">
+                                    View
+                                </a>
+                            </td>
+                        </tr>
+
+                    <?php endforeach; ?>
+
+                    </tbody>
+
+                </table>
+            </div>
+
+        </div>
+    </div>
+
+    <?php
+}
+
+
+function rsjm_customer_detail_page(){
+
+    global $wpdb;
+
+    $id = intval($_GET['id']);
+    $user = get_user_by('id', $id);
+
+    if(!$user){
+        echo "Customer not found";
+        return;
+    }
+
+    $jobs = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE customer_id=%d ORDER BY id DESC",
+            $id
+        )
+    );
+
+    ?>
+
+    <div class="rsjm-wrap">
+
+        <h2 class="rsjm-title">
+            👤 <?= esc_html($user->display_name) ?>
+        </h2>
+
+        <div class="rsjm-card">
+            <p><strong>Phone:</strong> <?= esc_html($user->user_login) ?></p>
+            <p><strong>Email:</strong> <?= esc_html($user->user_email) ?></p>
+            <p><strong>Points:</strong> <?= rsjm_get_customer_points($id) ?></p>
+        </div>
+
+        <div class="rsjm-card">
+
+            <h3>📦 Job History</h3>
+
+            <div class="rsjm-table-wrap">
+                <table class="rsjm-table">
+
+                    <thead>
+                        <tr>
+                            <th>Job ID</th>
+                            <th>Status</th>
+                            <th>Total</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                    <?php if($jobs): foreach($jobs as $j): ?>
+
+                        <tr>
+                            <td>#<?= $j->id ?></td>
+                            <td><?= ucfirst($j->status) ?></td>
+                            <td>₹<?= number_format($j->total,2) ?></td>
+                            <td><?= date('d M Y', strtotime($j->created_at)) ?></td>
+                        </tr>
+
+                    <?php endforeach; else: ?>
+
+                        <tr><td colspan="4">No jobs found</td></tr>
+
+                    <?php endif; ?>
+
+                    </tbody>
+
+                </table>
+            </div>
+
+        </div>
+
+    </div>
+
+    <?php
+}

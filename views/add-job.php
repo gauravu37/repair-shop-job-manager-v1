@@ -17,14 +17,18 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
 
     <div class="rsjm-field">
         <label>Customer</label>
-        <select name="customer_id" required>
-            <option value="">Select Customer</option>
-            <?php foreach(get_users() as $u): ?>
-                <option value="<?php echo esc_attr($u->ID); ?>">
-                    <?php echo esc_html($u->display_name); ?> (<?php echo esc_html($u->user_email); ?>)
-                </option>
-            <?php endforeach; ?>
-        </select>
+        <select name="customer_id" id="rsjm_customer" style="width:100%" required>
+			<option value="">Search Customer...</option>
+			<?php foreach(get_users() as $u): ?>
+				<option value="<?php echo esc_attr($u->ID); ?>">
+					<?php echo esc_html($u->display_name); ?> (<?php echo esc_html($u->user_login); ?>)
+				</option>
+			<?php endforeach; ?>
+		</select>
+
+		<button type="button" class="rsjm-btn" id="add_customer_btn">
+		➕ Add Customer
+		</button>
     </div>
 
 	<div class="rsjm-field">
@@ -180,6 +184,24 @@ $current_points = rsjm_get_customer_points($_POST['customer_id'] ?? 0);
 </button>
 
 </form>
+
+<div id="rsjm_customer_modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999;">
+
+    <div style="background:#fff; max-width:400px; margin:80px auto; padding:20px; border-radius:8px;">
+
+        <h3>Add Customer</h3>
+
+        <input type="text" id="cust_fname" placeholder="First Name" style="width:100%;margin-bottom:10px">
+		<input type="text" id="cust_lname" placeholder="Last Name" style="width:100%;margin-bottom:10px">
+        <input type="text" id="cust_phone" placeholder="Phone" style="width:100%;margin-bottom:10px">
+        <input type="email" id="cust_email" placeholder="Email" style="width:100%;margin-bottom:10px">
+        <textarea id="cust_address" placeholder="Address" style="width:100%;margin-bottom:10px"></textarea>
+
+        <button id="save_customer" class="rsjm-btn rsjm-btn-success">Save</button>
+        <button onclick="document.getElementById('rsjm_customer_modal').style.display='none'" class="rsjm-btn">Cancel</button>
+
+    </div>
+</div>
 </div>
 </div>
 
@@ -462,4 +484,53 @@ function calculateTotals() {
 	
 	
 
+	jQuery(document).ready(function($){
+
+		$('#rsjm_customer').select2({
+			placeholder: "Search or select customer",
+			width: '100%'
+		});
+
+	});
+	
+	document.getElementById('add_customer_btn').addEventListener('click', function(){
+		document.getElementById('rsjm_customer_modal').style.display = 'block';
+	});
+	
+	
+	document.getElementById('save_customer').addEventListener('click', function(){
+
+		let data = new URLSearchParams({
+			action: 'rsjm_add_customer',
+			fname: document.getElementById('cust_fname').value,
+			lname: document.getElementById('cust_lname').value,
+			phone: document.getElementById('cust_phone').value,
+			email: document.getElementById('cust_email').value,
+			address: document.getElementById('cust_address').value
+		});
+
+		fetch(ajaxurl, {
+			method: 'POST',
+			headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+			body: data
+		})
+		.then(res => res.json())
+		.then(res => {
+
+			if(res.success){
+
+				let select = jQuery('#rsjm_customer');
+
+				let option = new Option(res.data.text, res.data.id, true, true);
+				select.append(option).trigger('change');
+
+				document.getElementById('rsjm_customer_modal').style.display = 'none';
+
+			} else {
+				alert(res.data);
+			}
+
+		});
+
+	});
 </script>

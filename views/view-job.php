@@ -48,11 +48,12 @@ Payments
 
 <table class="rsjm-table">
 <tr>
-<th>SKU</th><th>Qty</th><th>Price</th><th>Total</th><th>Remove</th>
+<th>Image<th>SKU</th><th>Qty</th><th>Price</th><th>Total</th><th>Remove</th>
 </tr>
 
 <?php foreach($items as $i): ?>
 <tr>
+<td><img src="<?=$i->item_image?>" style="max-width:50px; "></td>
 <td><?=$i->sku?></td>
 <td>
 <input type="number" name="qty[<?=$i->id?>]" value="<?=$i->qty?>">

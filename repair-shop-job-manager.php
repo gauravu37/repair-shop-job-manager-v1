@@ -1,6 +1,6 @@
 <?php
 /*
-Plugin Name: Repair Shop Job Manager
+Plugin Name: Shop Job Manager
 Description: Complete repair shop system with GST, PDF, WhatsApp & UPI
 Version: 1.0
 Author: Gaurav Mittal
@@ -29,7 +29,8 @@ register_activation_hook(__FILE__, function () {
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(255),
         sku VARCHAR(100),
-        price DECIMAL(10,2)
+        price DECIMAL(10,2),
+		image TEXT;
     ) $charset;");
 
     dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_jobs (
@@ -62,7 +63,8 @@ register_activation_hook(__FILE__, function () {
         total DECIMAL(10,2),
         problem TEXT,
         replacement TINYINT,
-        replacement_sku VARCHAR(100)
+        replacement_sku VARCHAR(100),
+		item_image TEXT
     ) $charset;");
 	
 	dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_payments (
@@ -93,8 +95,8 @@ register_activation_hook(__FILE__, function () {
 add_action('admin_menu', function () {
 
     add_menu_page(
-        'Repair Jobs',
-        'Repair Jobs',
+        'Jobs',
+        'Jobs',
         'manage_options',
         'rsjm-jobs',
         function () {
@@ -315,6 +317,8 @@ add_action('admin_init', function () {
 
         foreach ($_POST['item_id'] as $k => $item_id) {
 
+			$image = $_POST['item_image'][$k] ?? '';
+			//echo $image; exit;
             $wpdb->insert($wpdb->prefix.'rsjm_job_items', [
                 'job_id' => $job_id,
                 'item_id' => $item_id,
@@ -324,7 +328,8 @@ add_action('admin_init', function () {
                 'total' => $_POST['total'][$k],
                 'problem' => $_POST['problem'][$k],
                 'replacement' => isset($_POST['replacement'][$k]) ? 1 : 0,
-                'replacement_sku' => $_POST['replacement_sku'][$k]
+                'replacement_sku' => $_POST['replacement_sku'][$k],
+				'item_image' => $image
             ]);
         }
 
@@ -1324,6 +1329,7 @@ add_action('wp_ajax_rsjm_add_customer', function(){
 	
 	$name  = $fname.' '.$lname;
     $phone = sanitize_text_field($_POST['phone']);
+	$altphone = sanitize_text_field($_POST['altphone']);
     $email = sanitize_email($_POST['email']);
     $address = sanitize_textarea_field($_POST['address']);
 
@@ -1355,6 +1361,8 @@ add_action('wp_ajax_rsjm_add_customer', function(){
     }
 
     update_user_meta($user_id, 'address', $address);
+	update_user_meta($user_id, 'altphone', $altphone);
+	update_user_meta($user_id, 'custphone', $phone);
 
     wp_send_json_success([
         'id' => $user_id,
@@ -1607,3 +1615,51 @@ function rsjm_customer_detail_page(){
 
     <?php
 }
+
+add_action('wp_ajax_rsjm_add_item', 'rsjm_add_item');
+
+function rsjm_add_item(){
+
+    global $wpdb;
+
+    $name  = sanitize_text_field($_POST['name']);
+    $sku   = sanitize_text_field($_POST['sku']);
+    $price = floatval($_POST['price']);
+
+    $image_url = '';
+
+    if(!empty($_FILES['image']['name'])){
+
+        require_once(ABSPATH . 'wp-admin/includes/file.php');
+
+        $upload = wp_handle_upload($_FILES['image'], ['test_form' => false]);
+
+        if(!isset($upload['error'])){
+            $image_url = $upload['url'];
+        }
+    }
+
+    $wpdb->insert("{$wpdb->prefix}rsjm_items", [
+        'name'  => $name,
+        'sku'   => $sku,
+        'price' => $price,
+        'image' => $image_url // 🔥 ADD COLUMN IN DB
+    ]);
+
+    $id = $wpdb->insert_id;
+
+    wp_send_json_success([
+        'id'    => $id,
+        'name'  => $name,
+        'sku'   => $sku,
+        'price' => $price,
+        'image' => $image_url
+    ]);
+}
+
+add_action('admin_enqueue_scripts', function($hook){
+    // load only on your page (optional but recommended)
+    if(isset($_GET['page']) && $_GET['page'] == 'rsjm-items'){
+        wp_enqueue_media();
+    }
+});

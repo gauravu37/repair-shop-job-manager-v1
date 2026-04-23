@@ -6,7 +6,7 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
 <div class="rsjm-wrap">
 <div class="rsjm-card">
 
-<h2 class="rsjm-title">🧾 New Repair Job</h2>
+<h2 class="rsjm-title">🧾 New Job</h2>
 
 <form method="post">
 <?php wp_nonce_field('rsjm_save_job','rsjm_nonce'); ?>
@@ -194,11 +194,29 @@ $current_points = rsjm_get_customer_points($_POST['customer_id'] ?? 0);
         <input type="text" id="cust_fname" placeholder="First Name" style="width:100%;margin-bottom:10px">
 		<input type="text" id="cust_lname" placeholder="Last Name" style="width:100%;margin-bottom:10px">
         <input type="text" id="cust_phone" placeholder="Phone" style="width:100%;margin-bottom:10px">
+		<input type="text" id="alt_phone" placeholder="Alternative Phone" style="width:100%;margin-bottom:10px">
         <input type="email" id="cust_email" placeholder="Email" style="width:100%;margin-bottom:10px">
         <textarea id="cust_address" placeholder="Address" style="width:100%;margin-bottom:10px"></textarea>
 
         <button id="save_customer" class="rsjm-btn rsjm-btn-success">Save</button>
         <button onclick="document.getElementById('rsjm_customer_modal').style.display='none'" class="rsjm-btn">Cancel</button>
+
+    </div>
+</div>
+
+<div id="rsjm_item_modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999;">
+
+    <div style="background:#fff; max-width:400px; margin:80px auto; padding:20px; border-radius:8px;">
+
+        <h3>Add Item</h3>
+
+        <input type="text" id="item_name" placeholder="Item Name" style="width:100%;margin-bottom:10px">
+        <input type="text" id="item_sku" placeholder="SKU" style="width:100%;margin-bottom:10px">
+        <input type="number" id="item_price" placeholder="Price" style="width:100%;margin-bottom:10px">
+		<input type="file" id="item_image" accept="image/*" style="width:100%;margin-bottom:10px">
+		<img id="item_preview" style="max-width:100px; display:none; margin-bottom:10px;">
+        <button id="save_item" class="rsjm-btn rsjm-btn-success">Save</button>
+        <button onclick="closeItemModal()" class="rsjm-btn">Cancel</button>
 
     </div>
 </div>
@@ -221,7 +239,8 @@ function addItemCard() {
         options += `
             <option value="${i.id}"
                     data-price="${i.price}"
-                    data-sku="${i.sku}">
+                    data-sku="${i.sku}" 
+					data-image="${i.image}">
                 ${i.name}
             </option>`;
     });
@@ -234,9 +253,15 @@ function addItemCard() {
 
             <div class="rsjm-field">
                 <label>Item</label>
-                <select name="item_id[]" onchange="setItemData(this)">
-                    ${options}
-                </select>
+				<div style="display:flex; gap:5px;">
+					<select name="item_id[]" onchange="setItemData(this)" class="rsjm-item-select">
+						${options}
+					</select>
+
+					<button type="button" onclick="openItemModal(this)" class="rsjm-btn">
+						➕
+					</button>
+				</div>
             </div>
 
             <div class="rsjm-field">
@@ -258,6 +283,14 @@ function addItemCard() {
                 <label>Total</label>
                 <input name="total[]" readonly>
             </div>
+			
+			<div class="rsjm-field">
+				<label>Item Image</label>
+				<img class="item-image-preview" style="max-width:80px; display:none;">
+				<input type="hidden" name="item_image[]">
+				
+				<input type="file" onchange="updateItemImage(this)">
+			</div>
 
             <div class="rsjm-field rsjm-full">
                 <label>Problem</label>
@@ -290,6 +323,8 @@ function addItemCard() {
 
     document.getElementById('items-wrapper')
             .insertAdjacentHTML('beforeend', card);
+			
+	initItemSelect2(document.getElementById('items-wrapper'));		
 
     calculateTotals();
 }
@@ -308,6 +343,20 @@ function setItemData(select) {
         opt.dataset.sku || '';
 
     calcItem(card.querySelector('[name="qty[]"]'));
+	
+	let img = opt.dataset.image || '';
+
+	let imgTag = card.querySelector('.item-image-preview');
+	let imgInput = card.querySelector('[name="item_image[]"]');
+
+	if(img){
+		imgTag.src = img;
+		imgTag.style.display = 'block';
+		imgInput.value = img; // 🔥 THIS IS WHAT SAVES
+	}else{
+		imgTag.style.display = 'none';
+		imgInput.value = '';
+	}
 }
 
 
@@ -490,6 +539,8 @@ function calculateTotals() {
 			placeholder: "Search or select customer",
 			width: '100%'
 		});
+		
+		initItemSelect2();
 
 	});
 	
@@ -500,31 +551,84 @@ function calculateTotals() {
 	
 	document.getElementById('save_customer').addEventListener('click', function(){
 
-		let data = new URLSearchParams({
-			action: 'rsjm_add_customer',
-			fname: document.getElementById('cust_fname').value,
-			lname: document.getElementById('cust_lname').value,
-			phone: document.getElementById('cust_phone').value,
-			email: document.getElementById('cust_email').value,
-			address: document.getElementById('cust_address').value
+			let data = new URLSearchParams({
+				action: 'rsjm_add_customer',
+				fname: document.getElementById('cust_fname').value,
+				lname: document.getElementById('cust_lname').value,
+				phone: document.getElementById('cust_phone').value,
+				altphone: document.getElementById('alt_phone').value,
+				email: document.getElementById('cust_email').value,
+				address: document.getElementById('cust_address').value
+			});
+
+			fetch(ajaxurl, {
+				method: 'POST',
+				headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+				body: data
+			})
+			.then(res => res.json())
+			.then(res => {
+
+				if(res.success){
+
+					let select = jQuery('#rsjm_customer');
+
+					let option = new Option(res.data.text, res.data.id, true, true);
+					select.append(option).trigger('change');
+
+					document.getElementById('rsjm_customer_modal').style.display = 'none';
+
+				} else {
+					alert(res.data);
+				}
+
+			});
+
 		});
+		
+		let currentSelect = null;
+
+		function openItemModal(btn){
+			currentSelect = btn.closest('.rsjm-item-card').querySelector('.rsjm-item-select');
+			document.getElementById('rsjm_item_modal').style.display = 'block';
+		}
+
+		function closeItemModal(){
+			document.getElementById('rsjm_item_modal').style.display = 'none';
+		}
+		
+		
+	document.getElementById('save_item').addEventListener('click', function(){
+
+		let formData = new FormData();
+
+		formData.append('action', 'rsjm_add_item');
+		formData.append('name', document.getElementById('item_name').value);
+		formData.append('sku', document.getElementById('item_sku').value);
+		formData.append('price', document.getElementById('item_price').value);
+
+		let file = document.getElementById('item_image').files[0];
+		if(file){
+			formData.append('image', file);
+		}
 
 		fetch(ajaxurl, {
 			method: 'POST',
-			headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-			body: data
+			body: formData
 		})
 		.then(res => res.json())
 		.then(res => {
 
 			if(res.success){
 
-				let select = jQuery('#rsjm_customer');
+				let option = new Option(res.data.name, res.data.id, true, true);
+				option.dataset.price = res.data.price;
+				option.dataset.sku   = res.data.sku;
+				option.dataset.image = res.data.image; // 🔥 NEW
 
-				let option = new Option(res.data.text, res.data.id, true, true);
-				select.append(option).trigger('change');
+				jQuery(currentSelect).append(option).trigger('change');
 
-				document.getElementById('rsjm_customer_modal').style.display = 'none';
+				closeItemModal();
 
 			} else {
 				alert(res.data);
@@ -533,4 +637,75 @@ function calculateTotals() {
 		});
 
 	});
+	
+	
+	function initItemSelect2(context = document){
+
+		jQuery(context).find('.rsjm-item-select').select2({
+			placeholder: "Search or select item",
+			width: '100%',
+			allowClear: true
+		});
+
+	}
+	
+	document.getElementById('item_image').addEventListener('change', function(e){
+
+		let file = e.target.files[0];
+		if(!file) return;
+
+		let reader = new FileReader();
+
+		reader.onload = function(ev){
+			let img = document.getElementById('item_preview');
+			img.src = ev.target.result;
+			img.style.display = 'block';
+		};
+
+		reader.readAsDataURL(file);
+
+	});
+	
+	function updateItemImage(input){
+
+		let file = input.files[0];
+		if(!file) return;
+
+		let reader = new FileReader();
+
+		reader.onload = function(e){
+			let card = input.closest('.rsjm-item-card');
+
+			let imgTag = card.querySelector('.item-image-preview');
+			let hidden = card.querySelector('[name="item_image[]"]');
+
+			imgTag.src = e.target.result;
+			imgTag.style.display = 'block';
+
+			hidden.value = e.target.result; // base64 (or upload separately if needed)
+		};
+
+		reader.readAsDataURL(file);
+	}
+	
+	
+	function formatItem(item){
+
+		if(!item.id) return item.text;
+
+		let img = jQuery(item.element).data('image');
+
+		if(img){
+			return $(`
+				<div style="display:flex;align-items:center;gap:10px;">
+					<img src="${img}" style="width:30px;height:30px;object-fit:cover;border-radius:4px;">
+					<span>${item.text}</span>
+				</div>
+			`);
+		}
+
+		return item.text;
+	}
+
+	
 </script>

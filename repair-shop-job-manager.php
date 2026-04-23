@@ -879,8 +879,7 @@ register_activation_hook(__FILE__, function(){
 
 Your job #{job_id} is pending.
 
-View status:
-{job_link}
+
 ");
     }
 
@@ -890,8 +889,7 @@ View status:
 
 Your job #{job_id} is in progress.
 
-Track here:
-{job_link}
+
 ");
     }
 
@@ -906,8 +904,7 @@ Amount: ₹{total}
 Pay here:
 {upi_link}
 
-Details:
-{job_link}
+
 ");
     }
 
@@ -919,8 +916,6 @@ Your job #{job_id} is completed.
 
 Total Paid: ₹{total}
 
-Receipt:
-{job_link}
 ");
     }
 
@@ -933,8 +928,6 @@ Partial payment received.
 Paid: ₹{paid}
 Pending: ₹{pending}
 
-Details:
-{job_link}
 ");
     }
 
@@ -1457,6 +1450,7 @@ function rsjm_customers_page(){
                         <tr>
                             <th>Name</th>
                             <th>Phone</th>
+							<th>Alt Phone</th>
                             <th>Points</th>
                             <th>Pending</th>
                             <th>Jobs</th>
@@ -1491,12 +1485,15 @@ function rsjm_customers_page(){
 
                         // OPTIONAL pending points logic
                         $pending_points = 0;
+						
+						$altphone = get_user_meta($u->ID, 'altphone', true);
 
                     ?>
 
                         <tr>
                             <td><?= esc_html($u->display_name) ?></td>
                             <td><?= esc_html($u->user_login) ?></td>
+							<td><?= $altphone; ?></td>
                             <td><?= intval($points) ?></td>
                             <td><?= intval($pending_points) ?></td>
                             <td><?= intval($jobs) ?></td>

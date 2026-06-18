@@ -114,7 +114,7 @@ $total_pages = ceil($total_jobs / $per_page);
 ?>
 
 <div class="wrap">
-<h1>Repair Jobs</h1>
+<h1>Jobs</h1>
 
 <form method="get" style="margin-bottom:15px;">
     <input type="hidden" name="page" value="rsjm-jobs">
@@ -165,7 +165,7 @@ $total_pages = ceil($total_jobs / $per_page);
     <td><span class="rsjm-status rsjm-status-<?=$job->status?>">
         <?=ucfirst($job->status)?>
     </span></td>
-    <td><?=date('d M Y',strtotime($job->created_at))?></td>
+    <td><?=date('d M Y',strtotime($job->delivery_date))?></td>
     <td>
         <a class="button button-small"
            href="<?=admin_url('admin.php?page=rsjm-view-job&job_id='.$job->id)?>">

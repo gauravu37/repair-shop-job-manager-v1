@@ -21,13 +21,14 @@ if (isset($_POST['rsjm_save_settings'])) {
     update_option('rsjm_waha_session', sanitize_text_field($_POST['waha_session']));
 	update_option('rsjm_waha_key', sanitize_text_field($_POST['waha_key']));
 
-    update_option('rsjm_shop_logo', intval($_POST['shop_logo']));
+    update_option('rsjm_shop_logo', $_POST['shop_logo']);
 	
 	update_option('rsjm_msg_pending', sanitize_textarea_field($_POST['msg_pending']));
 	update_option('rsjm_msg_progress', sanitize_textarea_field($_POST['msg_progress']));
 	update_option('rsjm_msg_ready', sanitize_textarea_field($_POST['msg_ready']));
 	update_option('rsjm_msg_completed', sanitize_textarea_field($_POST['msg_completed']));
 	update_option('rsjm_msg_partial', sanitize_textarea_field($_POST['msg_partial']));
+	update_option('enable_stock', isset($_POST['enable_stock']) ? 1 : 0);
 
 
     echo '<div class="updated notice"><p>Settings Saved.</p></div>';
@@ -51,7 +52,7 @@ $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
 
 <div class="rsjm-card">
 
-<h2 class="rsjm-title">⚙ Repair Shop Settings</h2>
+<h2 class="rsjm-title">⚙ Buisness Settings</h2>
 
 
 <form method="post">
@@ -62,31 +63,31 @@ $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
 <!-- BRANDING -->
 <div class="rsjm-card">
 
-<h3 class="rsjm-title">🏪 Shop Branding</h3>
+<h3 class="rsjm-title">🏪 Buisness Branding</h3>
 
 <div class="rsjm-grid">
 
     <div class="rsjm-field rsjm-full">
-        <label>Shop Name</label>
+        <label>Buisness Name</label>
         <input name="shop_name"
                value="<?php echo esc_attr($shop_name); ?>">
     </div>
 
     <div class="rsjm-field rsjm-full">
-        <label>Shop Address</label>
+        <label>Buisness Address</label>
         <textarea name="shop_address" rows="3"><?php
             echo esc_textarea($address);
         ?></textarea>
     </div>
 
     <div class="rsjm-field">
-        <label>Shop Logo</label>
+        <label>Buisness Logo URL</label>
 
-        <input type="hidden"
+        <input type="text"
                name="shop_logo"
                id="rsjm-logo-id"
                value="<?php echo esc_attr($logo_id); ?>">
-
+			<br>OR<br> 
         <button type="button"
                 class="rsjm-btn rsjm-btn-light"
                 id="rsjm-upload-logo">
@@ -106,6 +107,14 @@ $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
 
         </div>
     </div>
+	
+	<div class="rsjm-field rsjm-full">
+		<label>
+			<input type="checkbox" name="enable_stock" value="1"
+				<?php checked(get_option('enable_stock'), 1); ?> style="width:auto">
+			Enable Inventory / Stock Management
+		</label>
+	</div>
 
 </div>
 </div>
@@ -184,7 +193,7 @@ $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
 <p>You can use these tags:</p>
 
 <code>
-{job_id}, {customer_name}, {status}, {total}, {paid}, {pending}, {payment_link}
+{job_id}, {customer_name}, {status}, {total}, {paid}, {pending}, {payment_link}, {delivery_date}
 </code>
 
 <br><br>

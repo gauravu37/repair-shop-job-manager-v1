@@ -25,13 +25,16 @@ register_activation_hook(__FILE__, function () {
     $charset = $wpdb->get_charset_collate();
     require_once ABSPATH.'wp-admin/includes/upgrade.php';
 
-    dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_items (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255),
-        sku VARCHAR(100),
-        price DECIMAL(10,2),
-		image TEXT;
-    ) $charset;");
+	
+	dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_items (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(255),
+		sku VARCHAR(100),
+		price DECIMAL(10,2),
+		cost_price DECIMAL(10,2) DEFAULT 0,
+		stock INT DEFAULT 0,
+		image TEXT
+	) $charset;");
 
     dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_jobs (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -50,6 +53,14 @@ register_activation_hook(__FILE__, function () {
 		pending_amount DECIMAL(10,2),
         payment_mode VARCHAR(20),
 		redeem_discount DECIMAL(10,2) DEFAULT 0,
+		discount_type VARCHAR(20) DEFAULT 'amount',
+		discount_value DECIMAL(10,2) DEFAULT 0,
+		discount_amount DECIMAL(10,2) DEFAULT 0,
+		courier_company VARCHAR(255),
+		tracking_number VARCHAR(255),
+		tracking_website TEXT,
+		tracking_link TEXT,
+		courier_date DATE,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) $charset;");
 
@@ -82,6 +93,16 @@ register_activation_hook(__FILE__, function () {
 		job_id INT,
 		points INT,
 		type VARCHAR(20), -- earn / redeem / manual
+		note VARCHAR(255),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) $charset;");
+	
+	dbDelta("CREATE TABLE {$wpdb->prefix}rsjm_stock_log (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		item_id INT,
+		job_id INT DEFAULT NULL,
+		qty INT,
+		type VARCHAR(20), -- in / out / manual
 		note VARCHAR(255),
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	) $charset;");
@@ -183,6 +204,29 @@ add_action('admin_menu', function () {
 		'rsjm-customer-view',
 		'rsjm_customer_detail_page'
 	);
+	
+	add_submenu_page(
+		'rsjm-jobs',
+		'Payments',
+		'Payments',
+		'manage_options',
+		'rsjm-payments',
+		function(){
+			include RSJM_PATH.'views/payments.php';
+		}
+	);
+	if(rsjm_is_stock_enabled()){
+	add_submenu_page(
+		'rsjm-jobs',
+		'Sales Report',
+		'Sales Report',
+		'manage_options',
+		'rsjm-sales',
+		function(){
+			include RSJM_PATH.'views/sales.php';
+		}
+	);
+	}
 
 });
 
@@ -199,7 +243,7 @@ add_action('admin_init', function () {
     if (isset($_POST['rsjm_save_job'])) {
 
         $subtotal = array_sum($_POST['total']);
-        $gst_percent = floatval($_POST['gst_percent']);
+       /* $gst_percent = floatval($_POST['gst_percent']);
         $gst_type = $_POST['gst_type'];
 
         $cgst = $sgst = $igst = 0;
@@ -210,9 +254,73 @@ add_action('admin_init', function () {
             $igst = ($subtotal * $gst_percent / 100);
         }
 
-        $raw_total = $subtotal + $cgst + $sgst + $igst;
+        $raw_total = $subtotal + $cgst + $sgst + $igst;*/
+		
+		$gst_percent = floatval($_POST['gst_percent']);
+		$gst_type    = sanitize_text_field($_POST['gst_type']);
+
+		/* =========================
+		   ORDER DISCOUNT
+		========================= */
+
+		$discount_type  = sanitize_text_field($_POST['discount_type'] ?? 'amount');
+
+		$discount_value = floatval($_POST['discount_value'] ?? 0);
+
+		$discount_amount = 0;
+
+		if($discount_type === 'percent'){
+
+			$discount_amount =
+				($subtotal * $discount_value) / 100;
+
+		} else {
+
+			$discount_amount = $discount_value;
+		}
+
+		if($discount_amount > $subtotal){
+			$discount_amount = $subtotal;
+		}
+
+		/* =========================
+		   PRICE AFTER DISCOUNT
+		========================= */
+
+		$taxable_amount =
+			$subtotal - $discount_amount;
+
+		/* =========================
+		   GST ON DISCOUNTED PRICE
+		========================= */
+
+		$cgst = $sgst = $igst = 0;
+
+		if ($gst_type === 'cgst_sgst') {
+
+			$cgst = $sgst =
+				($taxable_amount * $gst_percent / 100) / 2;
+
+		} elseif ($gst_type === 'igst') {
+
+			$igst =
+				($taxable_amount * $gst_percent / 100);
+		}
+
+		/* =========================
+		   TOTAL BEFORE REDEEM
+		========================= */
+
+		$raw_total =
+			$taxable_amount + $cgst + $sgst + $igst;
+		
 
 		$redeem_points = intval($_POST['redeem_points'] ?? 0);
+		$available = rsjm_get_customer_points(intval($_POST['customer_id']));
+
+		if($redeem_points > $available){
+			$redeem_points = $available;
+		}
 		$redeem_discount = $redeem_points; // 1 point = ₹1
 
 		if($redeem_discount > $raw_total){
@@ -224,7 +332,7 @@ add_action('admin_init', function () {
 		/* ===============================
 		   APPLY REDEEM DISCOUNT
 		=============================== */
-
+/* Hide fot testing
 		$redeem = intval($_POST['redeem_points'] ?? 0);
 		$available = rsjm_get_customer_points(intval($_POST['customer_id']));
 
@@ -236,7 +344,7 @@ add_action('admin_init', function () {
 			$total = $total - $redeem;
 			if($total < 0) $total = 0;
 		}
-
+*/
         $advance = floatval($_POST['advance'] ?? 0);
         //$paid = $advance;
         //$pending = $total - $paid;
@@ -274,11 +382,52 @@ add_action('admin_init', function () {
 			'paid_amount' => 0,
 			'pending_amount' => $total,
 			'status' => 'pending',
-			'delivery_date' => $_POST['delivery_date']
+			'delivery_date' => $_POST['delivery_date'],
+			'status' => $_POST['job_status'],
+			'discount_type'   => $discount_type,
+			'discount_value'  => $discount_value,
+			'discount_amount' => $discount_amount,
+			'courier_company' => sanitize_text_field($_POST['courier_company'] ?? ''),
+			'tracking_number' => sanitize_text_field($_POST['tracking_number'] ?? ''),
+			'tracking_website' => esc_url_raw($_POST['tracking_website'] ?? ''),
+			'tracking_link' => esc_url_raw($_POST['tracking_link'] ?? ''),
+			'courier_date' => sanitize_text_field($_POST['courier_date'] ?? ''),
 		]);
 
         $job_id = $wpdb->insert_id;
 		
+		
+		//$payment_method = sanitize_text_field($_POST['payment_method'] ?? '');
+		//$paid_amount = floatval($_POST['paid_amount'] ?? 0);
+		
+		if(!empty($_POST['payment_method'])){
+
+			foreach($_POST['payment_method'] as $k => $method){
+
+				$amount = floatval($_POST['payment_amount'][$k]);
+
+				if($amount <= 0) continue;
+
+				rsjm_add_payment(
+					$job_id,
+					$amount,
+					sanitize_text_field($method),
+					'Paid at job creation'
+				);
+			}
+		}
+
+		/*if($paid_amount > 0){
+
+			rsjm_add_payment(
+				$job_id,
+				$paid_amount,
+				$payment_method ?: 'Cash',
+				'Paid at job creation'
+			);
+		}*/
+		
+		rsjm_auto_update_status($job_id);
 		/* ===============================
 		   SAVE REDEEM POINTS
 		=============================== */
@@ -317,6 +466,24 @@ add_action('admin_init', function () {
 
         foreach ($_POST['item_id'] as $k => $item_id) {
 
+
+			$qty = intval($_POST['qty'][$k]);
+			
+			if(rsjm_is_stock_enabled()){
+				// ✅ 1. CHECK STOCK
+				$current_stock = $wpdb->get_var(
+					$wpdb->prepare(
+						"SELECT stock FROM {$wpdb->prefix}rsjm_items WHERE id=%d",
+						$item_id
+					)
+				);
+
+				if($qty > $current_stock){
+					wp_die("❌ Not enough stock for item ID: $item_id (Available: $current_stock, Required: $qty)");
+				}
+			}
+			
+			// ✅ 2. INSERT ITEM
 			$image = $_POST['item_image'][$k] ?? '';
 			//echo $image; exit;
             $wpdb->insert($wpdb->prefix.'rsjm_job_items', [
@@ -325,14 +492,38 @@ add_action('admin_init', function () {
                 'sku' => $_POST['sku'][$k],
                 'qty' => $_POST['qty'][$k],
                 'price' => $_POST['price'][$k],
+				'disc_per' => $_POST['discount_percent'][$k],
+				'disc_price' => $_POST['discount_amount'][$k],
                 'total' => $_POST['total'][$k],
                 'problem' => $_POST['problem'][$k],
                 'replacement' => isset($_POST['replacement'][$k]) ? 1 : 0,
                 'replacement_sku' => $_POST['replacement_sku'][$k],
 				'item_image' => $image
             ]);
+			
+			if(rsjm_is_stock_enabled()){
+				// ✅ 3. REDUCE STOCK
+				$wpdb->query(
+					$wpdb->prepare(
+						"UPDATE {$wpdb->prefix}rsjm_items 
+						 SET stock = stock - %d 
+						 WHERE id = %d",
+						$qty,
+						$item_id
+					)
+				);
+				
+				//Log STOCK OUT
+				$wpdb->insert($wpdb->prefix.'rsjm_stock_log', [
+					'item_id' => $item_id,
+					'job_id'  => $job_id,
+					'qty'     => $qty,
+					'type'    => 'out',
+					'note'    => "Sold via Job #$job_id"
+				]);
+			}
         }
-
+		
         rsjm_send_email($job_id);
         rsjm_notify_status_change($job_id);
 
@@ -497,8 +688,13 @@ add_action('admin_init', function () {
     $status = sanitize_text_field($_POST['status']);
 
     $data = [
-        'status' => $status
-    ];
+		'status' => $status,
+		'courier_company' => sanitize_text_field($_POST['courier_company'] ?? ''),
+		'tracking_number' => sanitize_text_field($_POST['tracking_number'] ?? ''),
+		'tracking_website' => esc_url_raw($_POST['tracking_website'] ?? ''),
+		'tracking_link' => esc_url_raw($_POST['tracking_link'] ?? ''),
+		'courier_date' => sanitize_text_field($_POST['courier_date'] ?? '')
+	];
 
     if ($status === 'ready') {
         $data['total'] = floatval($_POST['ready_amount']);
@@ -577,6 +773,17 @@ function rsjm_notify_status_change($job_id){
     /* PARSE TAGS */
     $message = rsjm_parse_message($tpl, $job);
 	
+	if($job->status == 'completed' && !empty($job->tracking_number)){
+
+		$message .= "\n\n📦 Courier Details";
+		$message .= "\nCourier: ".$job->courier_company;
+		$message .= "\nTracking No: ".$job->tracking_number;
+		$message .= "\nWebsite: ".$job->tracking_website;
+
+		if(!empty($job->tracking_link)){
+			$message .= "\nTrack Here:\n".$job->tracking_link;
+		}
+	}
 	
 	$items = $wpdb->get_results(
 		$wpdb->prepare(
@@ -598,6 +805,8 @@ function rsjm_notify_status_change($job_id){
 
 			$qty   = floatval($item['qty']);
 			$price = floatval($item['price']);
+			$disc_per = floatval($item['disc_per']);
+			$disc_price = floatval($item['disc_price']);
 			$total = floatval($item['total']);
 
 			// fallback
@@ -609,6 +818,8 @@ function rsjm_notify_status_change($job_id){
 				'name'  => $item['name'] ?? 'Item',
 				'qty'   => $qty,
 				'price' => $price,
+				'disc_per' => $disc_per,
+				'disc_price' => $disc_price,
 				'total' => $total
 			];
 		}
@@ -618,11 +829,11 @@ function rsjm_notify_status_change($job_id){
        🔗 GENERATE PUBLIC LINK
     ============================== */
 
-    $api_url = "https://prontoinfosys.net/api/save-job.php";
+    $api_url = "https://sugandhadiy.com/api/save-job.php";
 
-	$attachment_id = get_option('rsjm_shop_logo'); // Replace with your actual image ID
-    $image_size = 'full';
-	$image_url = wp_get_attachment_image_url( $attachment_id, $image_size );
+	//$attachment_id = get_option('rsjm_shop_logo'); // Replace with your actual image ID
+    //$image_size = 'full';
+	//$image_url = wp_get_attachment_image_url( $attachment_id, $image_size );
     $data = [
         'job_id' => $job->id,
         'name'   => $user->display_name,
@@ -630,15 +841,17 @@ function rsjm_notify_status_change($job_id){
         'status' => $job->status,
         'amount' => $job->total ?? 0,
         'time'   => time(),
-		'logo' => $image_url,
+		'logo' => get_option('rsjm_shop_logo'),
 		'shop_name' => get_option('rsjm_shop_name'),
 		'shop_address' => get_option('rsjm_shop_address'),
 		'shop_phone' => get_option('rsjm_shop_phone'),
 		'items' => $items_array,
 		'subtotal' => $job->subtotal,
+		'redeem_discount' => $job->redeem_discount,
 		'advance' => $job->advance,
 		'pending' => $job->pending,
 		'total' => $job->total,
+		'discount_amount' => $job->discount_amount
     ];
 
     $response = wp_remote_post($api_url, [
@@ -651,7 +864,7 @@ function rsjm_notify_status_change($job_id){
         $res = json_decode(wp_remote_retrieve_body($response), true);
 
         if(!empty($res['token'])){
-            $link = "https://prontoinfosys.net/api/view.php?id=".$res['token'];
+            $link = "https://sugandhadiy.com/api/view.php?id=".$res['token'];
 
             // Append link in message
             $message .= "\n\nView Details: ".$link;
@@ -936,7 +1149,10 @@ Pending: ₹{pending}
 
 function rsjm_parse_message($template, $job){
 
-    $user = get_user_by('id', $job->customer_id);
+	$total_points = rsjm_get_customer_points($job->customer_id);
+	$earned_points = floor($job->total / 100) * 5;
+    
+	$user = get_user_by('id', $job->customer_id);
 
     // Customer public link
     $job_link = rsjm_customer_job_link($job->id);
@@ -946,7 +1162,9 @@ function rsjm_parse_message($template, $job){
 
     $upi_link = '';
     if($upi){
-        $upi_link = "upi://pay?pa={$upi}&pn=RepairShop&am={$job->total}&cu=INR";
+        //$upi_link = "upi://pay?pa={$upi}&pn=RepairShop&am={$job->total}&cu=INR";
+		$upi_link ="https://sugandhadiy.com/api/pay.php?pa={$upi_id}&am={$job->total}&cu=INR&pn=RepairShop";
+		//$upi_link = "https://sugandhadiy.com/api/pay.php?pa={$upi}&am={$job->total}&cu=INR&pn=RepairShop";
     }
 	
 	$fin = rsjm_get_job_financials($job->id);
@@ -968,12 +1186,21 @@ function rsjm_parse_message($template, $job){
 		
 		'{paid}' => number_format($fin['paid'],2),
 		'{pending}' => number_format($fin['pending'],2),
+		'{delivery_date}' => date('d-m-Y', strtotime($job->delivery_date)),
 
         '{job_link}'      => $job_link,
 
         '{upi_link}'      => $upi_link,
 		
 		'{advance}' => number_format($job->advance,2),
+		
+		'{earned_points}' => $earned_points,
+		'{total_points}'  => $total_points,
+		'{courier_company}' => $job->courier_company,
+		'{tracking_number}' => $job->tracking_number,
+		'{tracking_website}' => $job->tracking_website,
+		'{tracking_link}' => $job->tracking_link,
+		'{courier_date}' => $job->courier_date,
     ];
 
     return str_replace(
@@ -1038,8 +1265,8 @@ add_shortcode('rsjm_customer_job', function(){
         ? $job->total
         : $job->subtotal;
 
-    $upi_link = "upi://pay?pa={$upi_id}&pn=" . urlencode($shop_name) .
-                "&am={$amount}&cu=INR";
+    //$upi_link = "upi://pay?pa={$upi_id}&pn=" . urlencode($shop_name)&am={$amount}&cu=INR";
+	$upi_link =	"https://sugandhadiy.com/api/pay.php?pa={$upi}&am={$job->total}&cu=INR&pn=RepairShop";
 
     ob_start();
     ?>
@@ -1250,7 +1477,12 @@ function rsjm_auto_update_status($job_id){
 
         if($already > 0) return;
 
-        $points = floor($job->total / 100); // 1 point per ₹100
+        //$points = floor($job->total / 100); // 1 point per ₹100
+		
+		$total = floatval($job->total);
+
+		// 5 points per 100
+		$points = floor($total / 100) * 5; // 5 point per ₹100
 
         if($points > 0){
             $wpdb->insert($wpdb->prefix.'rsjm_points',[
@@ -1660,3 +1892,29 @@ add_action('admin_enqueue_scripts', function($hook){
         wp_enqueue_media();
     }
 });
+
+
+add_action('admin_enqueue_scripts', function($hook){
+
+    if(isset($_GET['page']) && $_GET['page'] === 'rsjm-payments'){
+
+        wp_enqueue_script('jquery');
+
+        wp_enqueue_style(
+            'datatable-css',
+            'https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css'
+        );
+
+        wp_enqueue_script(
+            'datatable-js',
+            'https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js',
+            ['jquery'],
+            null,
+            true
+        );
+    }
+});
+
+function rsjm_is_stock_enabled(){
+    return get_option('enable_stock') == 1;
+}

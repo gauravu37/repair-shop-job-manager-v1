@@ -549,3 +549,8 @@ body.rsjm-dark .rsjm-chart-card{
     background:#dc2626 !important;
     color:#fff !important;
 }
+
+
+.badge-cash { background:#4caf50; color:#fff; padding:3px 8px; border-radius:6px; }
+.badge-upi { background:#2196f3; color:#fff; padding:3px 8px; border-radius:6px; }
+.badge-bank { background:#ff9800; color:#fff; padding:3px 8px; border-radius:6px; }

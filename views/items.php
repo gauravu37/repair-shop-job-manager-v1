@@ -10,18 +10,41 @@ if(isset($_GET['delete'])){
 /* ADD / UPDATE */
 if(isset($_POST['save'])){
 
-    $data = [
-        'name'  => sanitize_text_field($_POST['name']),
-        'sku'   => sanitize_text_field($_POST['sku']),
-        'price' => floatval($_POST['price']),
-        'image' => esc_url_raw($_POST['image'])
-    ];
+	
+	$data = [
+		'name'  => sanitize_text_field($_POST['name']),
+		'sku'   => sanitize_text_field($_POST['sku']),
+		'price' => floatval($_POST['price']),
+		'cost_price' => floatval($_POST['cost_price']),
+		'stock' => intval($_POST['stock']),
+		'image' => esc_url_raw($_POST['image'])
+	];
 
     if(!empty($_POST['id'])){
         $wpdb->update($table, $data, ['id' => intval($_POST['id'])]);
     }else{
         $wpdb->insert($table, $data);
     }
+	
+	//Log STOCK IN (when adding stock manually)
+	if(!empty($_POST['id'])){
+
+		$old = $wpdb->get_row("SELECT stock FROM $table WHERE id=".intval($_POST['id']));
+
+		$new_stock = intval($_POST['stock']);
+
+		if($new_stock > $old->stock){
+
+			$added = $new_stock - $old->stock;
+
+			$wpdb->insert($wpdb->prefix.'rsjm_stock_log', [
+				'item_id' => intval($_POST['id']),
+				'qty'     => $added,
+				'type'    => 'in',
+				'note'    => 'Manual stock added'
+			]);
+		}
+	}
 }
 
 /* EDIT DATA */
@@ -59,6 +82,21 @@ $items = $wpdb->get_results("SELECT * FROM $table ORDER BY id DESC");
             <label>Price</label>
             <input type="number" step="0.01" name="price" required value="<?= $edit->price ?? '' ?>">
         </div>
+		
+		<?php //Hide Stock Fields in Item Master
+		if(rsjm_is_stock_enabled()): ?>
+		<div class="rsjm-field">
+			<label>Cost Price</label>
+			<input type="number" step="0.01" name="cost_price" 
+				   value="<?= $edit->cost_price ?? '' ?>">
+		</div>
+
+		<div class="rsjm-field">
+			<label>Stock</label>
+			<input type="number" name="stock" 
+				   value="<?= $edit->stock ?? 0 ?>">
+		</div>
+		<?php endif; ?>
 
         <div class="rsjm-field">
 			<label>Item Image</label>
@@ -97,6 +135,11 @@ $items = $wpdb->get_results("SELECT * FROM $table ORDER BY id DESC");
     <th>Name</th>
     <th>SKU</th>
     <th>Price</th>
+	<<?php if(rsjm_is_stock_enabled()): ?>
+    <th>Stock</th>
+    <th>Cost</th>
+	<th>Profit</th>
+	<?php endif; ?>	
     <th>Action</th>
 </tr>
 </thead>
@@ -117,6 +160,23 @@ $items = $wpdb->get_results("SELECT * FROM $table ORDER BY id DESC");
     <td><?= esc_html($i->name) ?></td>
     <td><?= esc_html($i->sku) ?></td>
     <td>₹<?= number_format($i->price,2) ?></td>
+	
+	<td>₹<?= number_format($i->cost_price,2) ?></td>
+
+	<td>
+		<?php if($i->stock > 0): ?>
+			<?= $i->stock ?>
+		<?php else: ?>
+			<span style="color:red;">Out of Stock</span>
+		<?php endif; ?>
+	</td>
+
+	<td>
+		<?php 
+			$profit = $i->price - $i->cost_price;
+			echo "₹".number_format($profit,2);
+		?>
+	</td>
 
     <td>
         <a href="?page=rsjm-items&edit=<?= $i->id ?>" class="rsjm-btn">✏️</a>

@@ -71,6 +71,37 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
         <label>Subtotal</label>
         <input id="rsjm-subtotal" readonly>
     </div>
+	<div class="rsjm-field">
+		<div class="rsjm-row">
+		
+		<label>Discount Type</label>
+			<select name="discount_type" id="rsjm-discount-type">
+				<option value="amount">Amount</option>
+				<option value="percent">Percentage</option>
+			</select>
+
+			
+
+		</div>
+	</div>
+	<div class="rsjm-field">
+		<label>Discount</label>
+		<input type="number"
+		   step="0.01"
+		   name="discount_value"
+		   id="rsjm-discount-value"
+		   value="0"
+		   oninput="calculateTotals()">
+	</div>
+	<div class="rsjm-field">
+		<label>Price After Discount</label>
+		<input id="rsjm-price-after-discount" readonly>
+	</div>
+
+	<div class="rsjm-field">
+		<label>Discount Amount</label>
+		<input id="rsjm-discount-amount" readonly>
+	</div>
 
     <div class="rsjm-field">
         <label>GST Type</label>
@@ -113,6 +144,8 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
 
 </div>
 
+
+
 </div>
 
 
@@ -150,6 +183,105 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
     <label>Estimated Delivery Date</label>
     <input type="date" name="delivery_date">
 </div>
+
+</div>
+
+<!-- JOB STATUS -->
+<div class="rsjm-card">
+
+    <h3 class="rsjm-title">Job Status</h3>
+
+    <div class="rsjm-field">
+        <label>Status</label>
+        <select name="job_status" required>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="ready_to_deliver">Ready to Deliver</option>
+            <option value="completed">Completed</option>
+            <option value="partial_paid">Partial Paid</option>
+        </select>
+    </div>
+
+</div>
+
+
+<!-- PAYMENT (ONLY FOR COMPLETED) -->
+<!--<div class="rsjm-card" id="payment-box" style="display:none;">
+
+    <h3 class="rsjm-title">Payment Details</h3>
+
+    <div class="rsjm-field">
+        <label>Payment Method</label>
+        <select name="payment_method">
+            <option value="">Select</option>
+            <option value="cash">Cash</option>
+            <option value="upi">UPI</option>
+            <option value="bank">Bank Transfer</option>
+        </select>
+    </div>
+
+    <div class="rsjm-field">
+        <label>Amount Paid</label>
+        <input type="number" name="paid_amount" step="0.01">
+    </div>
+
+</div>-->
+
+<div class="rsjm-card" id="payment-box" style="display:none;">
+
+    <h3 class="rsjm-title">Payment Details</h3>
+
+    <div id="payment-rows"></div>
+
+    <button type="button" onclick="addPaymentRow()" class="rsjm-btn">
+        + Add Payment
+    </button>
+
+</div>
+
+
+<!-- COURIER DETAILS -->
+<div class="rsjm-card">
+
+    <h3 class="rsjm-title">Courier / Tracking Details</h3>
+
+    <div class="rsjm-grid">
+
+        <div class="rsjm-field">
+            <label>Courier Company</label>
+            <input type="text"
+                   name="courier_company"
+                   placeholder="e.g. DTDC, Delhivery, Blue Dart">
+        </div>
+
+        <div class="rsjm-field">
+            <label>Tracking Number</label>
+            <input type="text"
+                   name="tracking_number"
+                   placeholder="AWB / Tracking Number">
+        </div>
+
+        <div class="rsjm-field rsjm-full">
+            <label>Tracking Website</label>
+            <input type="url"
+                   name="tracking_website"
+                   placeholder="https://www.delhivery.com">
+        </div>
+
+        <div class="rsjm-field rsjm-full">
+            <label>Direct Tracking Link (Optional)</label>
+            <input type="url"
+                   name="tracking_link"
+                   placeholder="https://tracking-company.com/track/123456">
+        </div>
+
+        <div class="rsjm-field">
+            <label>Courier Date</label>
+            <input type="date"
+                   name="courier_date">
+        </div>
+
+    </div>
 
 </div>
 
@@ -226,7 +358,7 @@ $current_points = rsjm_get_customer_points($_POST['customer_id'] ?? 0);
 
 <!-- JS -->
 <script>
-
+var ajaxurl = "<?php echo admin_url('admin-ajax.php'); ?>";
 const ITEMS = <?php echo json_encode($items); ?>;
 
 
@@ -235,15 +367,17 @@ function addItemCard() {
 
     let options = '<option value="">Select Item</option>';
 
-    ITEMS.forEach(i => {
-        options += `
-            <option value="${i.id}"
-                    data-price="${i.price}"
-                    data-sku="${i.sku}" 
-					data-image="${i.image}">
-                ${i.name}
-            </option>`;
-    });
+ 
+	ITEMS.forEach(i => {
+		options += `
+			<option value="${i.id}"
+					data-price="${i.price}"
+					data-sku="${i.sku}" 
+					data-image="${i.image}"
+					data-stock="${i.stock}">
+				${i.name} (${i.stock} in stock)
+			</option>`;
+	});
 
     let card = `
 
@@ -278,6 +412,20 @@ function addItemCard() {
                 <label>Price</label>
                 <input name="price[]" oninput="calcItem(this)">
             </div>
+				
+			<div class="rsjm-field">
+				<label>Discount %</label>
+				<input name="discount_percent[]" 
+					   value="0" 
+					   oninput="handleDiscountPercent(this)">
+			</div>
+
+			<div class="rsjm-field">
+				<label>Discount ₹</label>
+				<input name="discount_amount[]" 
+					   value="0" 
+					   oninput="handleDiscountAmount(this)">
+			</div>
 
             <div class="rsjm-field">
                 <label>Total</label>
@@ -357,11 +505,23 @@ function setItemData(select) {
 		imgTag.style.display = 'none';
 		imgInput.value = '';
 	}
+	
+	<?php if(rsjm_is_stock_enabled()): ?>
+	let stock = parseInt(opt.dataset.stock || 0);
+
+	if(stock <= 0){
+		alert('❌ This item is OUT OF STOCK');
+	}
+
+	if(stock > 0 && stock <= 5){
+		alert('⚠️ Low stock: Only ' + stock + ' left');
+	}
+	<?php endif; ?>
 }
 
 
 /* CALCULATE ITEM */
-function calcItem(el) {
+/*function calcItem(el) {
 
     let card = el.closest('.rsjm-item-card');
 
@@ -372,6 +532,72 @@ function calcItem(el) {
         (qty * price).toFixed(2);
 
     calculateTotals();
+}*/
+
+function calcItem(el) {
+
+    let card = el.closest('.rsjm-item-card');
+
+    let qty   = parseFloat(card.querySelector('[name="qty[]"]').value || 0);
+    let price = parseFloat(card.querySelector('[name="price[]"]').value || 0);
+
+    let discount = parseFloat(card.querySelector('[name="discount_amount[]"]')?.value || 0);
+
+    let total = (qty * price) - discount;
+
+    if(total < 0) total = 0;
+	
+	<?php if(rsjm_is_stock_enabled()): ?>
+	let stock = parseInt(card.querySelector('.rsjm-item-select').selectedOptions[0].dataset.stock || 0);
+
+	if(qty > stock){
+		alert('❌ Only ' + stock + ' items available');
+		card.querySelector('[name="qty[]"]').value = stock;
+		qty = stock;
+	}
+	<?php endif; ?>
+	
+    card.querySelector('[name="total[]"]').value = total.toFixed(2);
+
+    calculateTotals();
+}
+
+function handleDiscountPercent(el){
+
+    let card = el.closest('.rsjm-item-card');
+
+    let percent = parseFloat(el.value || 0);
+    let price   = parseFloat(card.querySelector('[name="price[]"]').value || 0);
+    let qty     = parseFloat(card.querySelector('[name="qty[]"]').value || 0);
+
+    let base = price * qty;
+
+    let discountAmount = (base * percent) / 100;
+
+    card.querySelector('[name="discount_amount[]"]').value = discountAmount.toFixed(2);
+
+    calcItem(el);
+}
+
+function handleDiscountAmount(el){
+
+    let card = el.closest('.rsjm-item-card');
+
+    let discount = parseFloat(el.value || 0);
+    let price    = parseFloat(card.querySelector('[name="price[]"]').value || 0);
+    let qty      = parseFloat(card.querySelector('[name="qty[]"]').value || 0);
+
+    let base = price * qty;
+
+    let percent = 0;
+
+    if(base > 0){
+        percent = (discount / base) * 100;
+    }
+
+    card.querySelector('[name="discount_percent[]"]').value = percent.toFixed(2);
+
+    calcItem(el);
 }
 
 
@@ -399,29 +625,75 @@ function calculateTotals() {
 
     let subtotal = 0;
 
+    // Item totals
     document.querySelectorAll('[name="total[]"]').forEach(el => {
         subtotal += parseFloat(el.value || 0);
     });
 
     document.getElementById('rsjm-subtotal').value = subtotal.toFixed(2);
 
-    let gstType = document.getElementById('rsjm-gst-type').value;
-    let gstPercent = parseFloat(document.getElementById('rsjm-gst-percent').value || 0);
+    /* =========================
+       ORDER DISCOUNT
+    ========================= */
 
-    let cgst = 0, sgst = 0, igst = 0;
+    let discountType =
+        document.getElementById('rsjm-discount-type')?.value || 'amount';
+
+    let discountValue =
+        parseFloat(document.getElementById('rsjm-discount-value')?.value || 0);
+
+    let discountAmount = 0;
+
+    if(discountType === 'percent'){
+        discountAmount = (subtotal * discountValue) / 100;
+    } else {
+        discountAmount = discountValue;
+    }
+
+    if(discountAmount > subtotal){
+        discountAmount = subtotal;
+    }
+
+    let taxableAmount = subtotal - discountAmount;
+
+    document.getElementById('rsjm-discount-amount').value =
+        discountAmount.toFixed(2);
+
+    document.getElementById('rsjm-price-after-discount').value =
+        taxableAmount.toFixed(2);
+
+    /* =========================
+       GST ON DISCOUNTED PRICE
+    ========================= */
+
+    let gstType =
+        document.getElementById('rsjm-gst-type').value;
+
+    let gstPercent =
+        parseFloat(document.getElementById('rsjm-gst-percent').value || 0);
+
+    let cgst = 0,
+        sgst = 0,
+        igst = 0;
 
     document.getElementById('cgst-box').style.display = 'none';
     document.getElementById('sgst-box').style.display = 'none';
     document.getElementById('igst-box').style.display = 'none';
 
     if (gstType === 'cgst_sgst') {
-        cgst = sgst = (subtotal * gstPercent / 100) / 2;
+
+        cgst = sgst =
+            (taxableAmount * gstPercent / 100) / 2;
+
         document.getElementById('cgst-box').style.display = 'block';
         document.getElementById('sgst-box').style.display = 'block';
     }
 
     if (gstType === 'igst') {
-        igst = subtotal * gstPercent / 100;
+
+        igst =
+            taxableAmount * gstPercent / 100;
+
         document.getElementById('igst-box').style.display = 'block';
     }
 
@@ -429,35 +701,47 @@ function calculateTotals() {
     document.getElementById('rsjm-sgst').value = sgst.toFixed(2);
     document.getElementById('rsjm-igst').value = igst.toFixed(2);
 
-    let grand = subtotal + cgst + sgst + igst;
+    /* =========================
+       GRAND TOTAL
+    ========================= */
 
-    // APPLY REDEEM
-    let redeem = parseFloat(document.getElementById('rsjm-redeem-points')?.value || 0);
+    let grand =
+        taxableAmount + cgst + sgst + igst;
+
+    /* =========================
+       REDEEM
+    ========================= */
+
+    let redeem =
+        parseFloat(document.getElementById('rsjm-redeem-points')?.value || 0);
 
     if (redeem > grand) {
         redeem = grand;
-        document.getElementById('rsjm-redeem-points').value = grand;
-    }
-	
-	// Show redeem discount
-	let redeemDisplay = document.getElementById('rsjm-redeem-display');
-	if(redeemDisplay){
-		redeemDisplay.value = redeem.toFixed(2); 
-	}
 
-    grand = grand - redeem;
+        document.getElementById('rsjm-redeem-points').value =
+            grand.toFixed(2);
+    }
+
+    grand -= redeem;
 
     if (grand < 0) grand = 0;
 
-    document.getElementById('rsjm-grand-total').value = grand.toFixed(2);
+    document.getElementById('rsjm-grand-total').value =
+        grand.toFixed(2);
 
-    // APPLY ADVANCE
-    let advance = parseFloat(document.querySelector('[name="advance"]')?.value || 0);
+    /* =========================
+       ADVANCE
+    ========================= */
+
+    let advance =
+        parseFloat(document.querySelector('[name="advance"]')?.value || 0);
 
     let pending = grand - advance;
+
     if (pending < 0) pending = 0;
 
-    document.getElementById('rsjm-pending-preview').value = pending.toFixed(2);
+    document.getElementById('rsjm-pending-preview').value =
+        pending.toFixed(2);
 }
 	
 	
@@ -475,39 +759,37 @@ function calculateTotals() {
 
 		if(customerSelect){
 
-			customerSelect.addEventListener('change', function(){
+			jQuery('#rsjm_customer').on('change', function(){
 
-				let customerId = this.value;
+    let customerId = this.value;
 
-				if(!customerId){
-					availableField.value = 0;
-					setMaxRedeem(0);
-					return;
-				}
+    if(!customerId){
+        jQuery('#rsjm-available-points').val(0);
+        return;
+    }
 
-				fetch(ajaxurl, {
-					method: "POST",
-					headers: {
-						"Content-Type": "application/x-www-form-urlencoded"
-					},
-					body: new URLSearchParams({
-						action: 'rsjm_get_points',
-						customer_id: customerId
-					})
-				})
-				.then(res => res.json())
-				.then(data => {
-					if(data.success){
-						let points = parseInt(data.data.points) || 0;
-						availableField.value = points;
-						setMaxRedeem(points);
-					} else {
-						availableField.value = 0;
-						setMaxRedeem(0);
-					}
-				});
+    fetch(ajaxurl, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+            action: 'rsjm_get_points',
+            customer_id: customerId
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if(data.success){
+            let points = parseInt(data.data.points) || 0;
+            jQuery('#rsjm-available-points').val(points);
+            jQuery('#rsjm-redeem-points').attr('max', points);
+        } else {
+            jQuery('#rsjm-available-points').val(0);
+        }
+    });
 
-			});
+});
 
 		}
 
@@ -638,6 +920,20 @@ function calculateTotals() {
 
 	});
 	
+	document.querySelector('[name="job_status"]').addEventListener('change', function(){
+
+		let box = document.getElementById('payment-box');
+		let total = parseFloat(document.getElementById('rsjm-grand-total').value || 0);
+
+		if(this.value === 'completed'){
+			box.style.display = 'block';
+			document.querySelector('[name="paid_amount"]').value = total;
+		} else {
+			box.style.display = 'none';
+		}
+
+	});
+		
 	
 	function initItemSelect2(context = document){
 
@@ -707,5 +1003,43 @@ function calculateTotals() {
 		return item.text;
 	}
 
+	function addPaymentRow(){
+
+		let html = `
+		<div class="payment-row" style="display:flex; gap:10px; margin-bottom:10px;">
+
+			<select name="payment_method[]">
+				<option value="cash">Cash</option>
+				<option value="upi">UPI</option>
+				<option value="bank">Bank</option>
+			</select>
+
+			<input type="number" step="0.01" name="payment_amount[]" placeholder="Amount">
+
+			<button type="button" onclick="this.parentNode.remove()">❌</button>
+
+		</div>
+		`;
+
+		document.getElementById('payment-rows').insertAdjacentHTML('beforeend', html);
+	}
 	
+	document.querySelector('[name="job_status"]').addEventListener('change', function(){
+
+		let box = document.getElementById('payment-box');
+
+		if(this.value === 'completed'){
+			box.style.display = 'block';
+
+			if(document.querySelectorAll('.payment-row').length === 0){
+				addPaymentRow();
+			}
+
+		} else {
+			box.style.display = 'none';
+		}
+
+	});
 </script>
+
+

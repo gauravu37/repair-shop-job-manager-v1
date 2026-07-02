@@ -150,6 +150,7 @@ $total_pages = ceil($total_jobs / $per_page);
     <th>Customer</th>
     <th>Total</th>
     <th>Status</th>
+	<th>Type</th>
     <th>Date</th>
     <th>Action</th>
 </tr>
@@ -165,6 +166,13 @@ $total_pages = ceil($total_jobs / $per_page);
     <td><span class="rsjm-status rsjm-status-<?=$job->status?>">
         <?=ucfirst($job->status)?>
     </span></td>
+	<td>
+		<?php 
+			echo $job->job_type == 'new'
+			? '<span class="rsjm-badge rsjm-new">New</span>'
+			: '<span class="rsjm-badge rsjm-repair">Repair</span>'; 
+		?>
+	</td>
     <td><?=date('d M Y',strtotime($job->delivery_date))?></td>
     <td>
         <a class="button button-small"

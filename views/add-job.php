@@ -11,6 +11,17 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
 <form method="post">
 <?php wp_nonce_field('rsjm_save_job','rsjm_nonce'); ?>
 
+<div class="rsjm-card" style="margin-bottom:20px;">
+    <label class="rsjm-label"><strong>Job Type</strong></label>
+
+    <div class="rsjm-job-type">
+        <input type="radio" id="job_new" name="job_type" value="new" checked>
+        <label for="job_new">🛒 New</label>
+
+        <input type="radio" id="job_repair" name="job_type" value="repair">
+        <label for="job_repair">🔧 Repair</label>
+    </div>
+</div>
 
 <!-- CUSTOMER -->
 <div class="rsjm-card" style="margin-bottom:20px">
@@ -47,7 +58,7 @@ $items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
 <!-- ITEMS -->
 <div class="rsjm-card">
 
-<h3 class="rsjm-title">Repair Items</h3>
+<h3 class="rsjm-title">Items</h3>
 
 <div id="items-wrapper"></div>
 
@@ -312,7 +323,7 @@ $current_points = rsjm_get_customer_points($_POST['customer_id'] ?? 0);
 
 <button class="rsjm-btn rsjm-btn-success"
         style="width:100%;font-size:16px">
-💾 Save Repair Job
+💾 Save Job
 </button>
 
 </form>

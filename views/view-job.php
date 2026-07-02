@@ -10,7 +10,7 @@ $user = get_user_by('id', $job->customer_id);
 <div class="rsjm-tabs">
 
 <button class="rsjm-tab-btn active"
-        onclick="openTab(event,'job-tab')">
+        onclick="openTab(event,'job-tab')"> 
 Job Details
 </button>
 

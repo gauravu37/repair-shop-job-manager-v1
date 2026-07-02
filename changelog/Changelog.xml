@@ -1,0 +1,6 @@
+<sup>
+	<v1>0012</v1>
+	<date>02-07-2026</date>
+	<sql>ALTER TABLE wp_rsjm_jobs
+	ADD job_type VARCHAR(20) NOT NULL DEFAULT 'repair';</sql>
+</sup>

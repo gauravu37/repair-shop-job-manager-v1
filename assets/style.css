@@ -554,3 +554,50 @@ body.rsjm-dark .rsjm-chart-card{
 .badge-cash { background:#4caf50; color:#fff; padding:3px 8px; border-radius:6px; }
 .badge-upi { background:#2196f3; color:#fff; padding:3px 8px; border-radius:6px; }
 .badge-bank { background:#ff9800; color:#fff; padding:3px 8px; border-radius:6px; }
+
+
+.rsjm-job-type{
+    display:flex;
+    gap:12px;
+}
+
+.rsjm-job-type input[type=radio]{
+    display:none;
+}
+
+.rsjm-job-type label{
+    padding:12px 28px;
+    border:2px solid #dcdcdc;
+    border-radius:8px;
+    cursor:pointer;
+    background:#fff;
+    font-weight:600;
+    transition:.2s;
+    user-select:none;
+}
+
+.rsjm-job-type input[type=radio]:checked + label{
+    background:#2271b1;
+    color:#fff;
+    border-color:#2271b1;
+    box-shadow:0 4px 12px rgba(34,113,177,.25);
+}
+
+.rsjm-job-type label:hover{
+    border-color:#2271b1;
+}
+
+
+.rsjm-new{
+    background:#16a34a;
+    color:#fff;
+    padding:4px 10px;
+    border-radius:20px;
+}
+
+.rsjm-repair{
+    background:#f59e0b;
+    color:#fff;
+    padding:4px 10px;
+    border-radius:20px;
+}

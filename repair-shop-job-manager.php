@@ -61,6 +61,7 @@ register_activation_hook(__FILE__, function () {
 		tracking_website TEXT,
 		tracking_link TEXT,
 		courier_date DATE,
+		job_type VARCHAR(20) DEFAULT 'new',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) $charset;");
 
@@ -392,6 +393,7 @@ add_action('admin_init', function () {
 			'tracking_website' => esc_url_raw($_POST['tracking_website'] ?? ''),
 			'tracking_link' => esc_url_raw($_POST['tracking_link'] ?? ''),
 			'courier_date' => sanitize_text_field($_POST['courier_date'] ?? ''),
+			'job_type' => sanitize_text_field($_POST['job_type'] ?? 'repair'),
 		]);
 
         $job_id = $wpdb->insert_id;

@@ -3,14 +3,14 @@ if (!defined('ABSPATH')) exit;
 global $wpdb;
 
 $job_id = intval($_GET['job_id']);
-$job = $wpdb->get_row("SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=$job_id");
-$items = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_job_items WHERE job_id=$job_id");
+$job = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d", $job_id));
+$items = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$wpdb->prefix}rsjm_job_items WHERE job_id=%d", $job_id));
 $user = get_user_by('id', $job->customer_id);
 ?>
 <div class="rsjm-tabs">
 
 <button class="rsjm-tab-btn active"
-        onclick="openTab(event,'job-tab')"> 
+        onclick="openTab(event,'job-tab')">
 Job Details
 </button>
 
@@ -37,91 +37,20 @@ Payments
 </p>
 </div>
 
-<div class="rsjm-card">
-<h3 class="rsjm-title">Items</h3>
+<?php
+/* ==============================================
+   Full Job Edit Form — same UI as "Add Job"
+   (items, GST, discount, redeem points, advance,
+   delivery, status, courier). Replaces the old
+   qty/price-only table and the separate mini
+   "Update Job" form.
+============================================== */
+$master_items        = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}rsjm_items");
+$mode                = 'edit';
+$existing_line_items = $items;
 
-<form method="post">
-<?php wp_nonce_field('rsjm_edit_items','rsjm_nonce'); ?>
-
-<input type="hidden" name="job_id" value="<?=$job->id?>">
-<input type="hidden" name="rsjm_edit_items" value="1">
-
-<table class="rsjm-table">
-<tr>
-<th>Image<th>SKU</th><th>Qty</th><th>Price</th><th>Total</th><th>Remove</th>
-</tr>
-
-<?php foreach($items as $i): ?>
-<tr>
-<td><img src="<?=$i->item_image?>" style="max-width:50px; "></td>
-<td><?=$i->sku?></td>
-<td>
-<input type="number" name="qty[<?=$i->id?>]" value="<?=$i->qty?>">
-</td>
-<td>
-<input type="number" step="0.01" name="price[<?=$i->id?>]" value="<?=$i->price?>">
-</td>
-<td>₹<?=$i->total?></td>
-<td>
-<input type="checkbox" name="remove[]" value="<?=$i->id?>">
-</td>
-</tr>
-<?php endforeach; ?>
-</table>
-
-<button class="rsjm-btn rsjm-btn-primary">Update Items</button>
-</form>
-
-</div>
-
-<div class="rsjm-card rsjm-no-print">
-<h3 class="rsjm-title">Update Job</h3>
-
-<form method="post">
-    <?php wp_nonce_field('rsjm_update_job','rsjm_nonce'); ?>
-
-    <input type="hidden" name="job_id" value="<?php echo esc_attr($job->id); ?>">
-    <input type="hidden" name="rsjm_update_job" value="1">
-
-    <div class="rsjm-field">
-        <label>Status</label>
-        <select name="status">
-            <option value="pending" <?php selected($job->status,'pending'); ?>>Pending</option>
-            <option value="in_progress" <?php selected($job->status,'in_progress'); ?>>In Progress</option>
-            <option value="ready" <?php selected($job->status,'ready'); ?>>Ready to Deliver</option>
-            <option value="completed" <?php selected($job->status,'completed'); ?>>Completed</option>
-            <option value="partial" <?php selected($job->status,'partial'); ?>>Partial Paid</option>
-        </select>
-    </div>
-
-    <!-- READY TO DELIVER -->
-    <div class="rsjm-field" id="readyBox" style="display:none;">
-        <label>Estimated Amount</label>
-        <input type="number" step="0.01" name="ready_amount" value="<?php echo esc_attr($job->total); ?>">
-    </div>
-
-    <!-- PAYMENT -->
-    <div class="rsjm-field" id="paymentBox" style="display:none;">
-        <label>Payment Method</label>
-        <select name="payment_method">
-            <option value="">Select</option>
-            <option value="cash">Cash</option>
-            <option value="upi">UPI</option>
-            <option value="bank">Bank Transfer</option>
-        </select>
-
-        <label>Amount Paid</label>
-        <input type="number" step="0.01" name="paid_amount">
-
-        <label>Pending Amount</label>
-        <input type="number" step="0.01" name="pending_amount">
-    </div>
-
-    <button class="rsjm-btn rsjm-btn-success">Update Job</button>
-    <button type="button" onclick="window.print()" class="rsjm-btn rsjm-btn-light">Print</button>
-</form>
-</div>
-
+include RSJM_PATH . 'views/job-form.php';
+?>
 
 <?php
 $fin = rsjm_get_job_financials($job->id);
@@ -133,7 +62,7 @@ $paid_percent = $fin['percent'];
 
 $advance = $wpdb->get_var(
     $wpdb->prepare(
-        "SELECT SUM(amount) FROM {$wpdb->prefix}rsjm_payments 
+        "SELECT SUM(amount) FROM {$wpdb->prefix}rsjm_payments
          WHERE job_id=%d AND method='Advance'",
         $job->id
     )
@@ -161,10 +90,6 @@ $advance = $advance ? floatval($advance) : 0;
             <?=round($paid_percent)?>% Paid
         </div>
     </div>
-	
-	
-	
-	
 
     <!-- BREAKDOWN GRID -->
     <div class="rsjm-breakdown-grid">
@@ -178,11 +103,11 @@ $advance = $advance ? floatval($advance) : 0;
             <span>Paid</span>
             <strong>₹<?=number_format($paid,2)?></strong>
         </div>
-		
-		<div class="rsjm-break-item paid">
-			<small>Redeem Discount</small>
-			<strong>₹<?=number_format($job->redeem_discount,2)?></strong>
-		</div>
+
+        <div class="rsjm-break-item paid">
+            <small>Redeem Discount</small>
+            <strong>₹<?=number_format($job->redeem_discount,2)?></strong>
+        </div>
 
         <div class="rsjm-break-item pending">
             <span>Pending</span>
@@ -198,9 +123,12 @@ $advance = $advance ? floatval($advance) : 0;
 
 <?php
 $payments = $wpdb->get_results(
-    "SELECT * FROM {$wpdb->prefix}rsjm_payments
-     WHERE job_id={$job->id}
-     ORDER BY id DESC"
+    $wpdb->prepare(
+        "SELECT * FROM {$wpdb->prefix}rsjm_payments
+         WHERE job_id=%d
+         ORDER BY id DESC",
+        $job->id
+    )
 );
 ?>
 
@@ -299,19 +227,6 @@ Add Payment
 
 
 <script>
-const statusSelect = document.querySelector('select[name="status"]');
-const readyBox = document.getElementById('readyBox');
-const paymentBox = document.getElementById('paymentBox');
-
-function toggleBoxes(){
-    readyBox.style.display = statusSelect.value === 'ready' ? 'block' : 'none';
-    paymentBox.style.display = 
-        (statusSelect.value === 'completed' || statusSelect.value === 'partial') 
-        ? 'block' : 'none';
-}
-toggleBoxes();
-statusSelect.addEventListener('change', toggleBoxes);
-
 function openTab(evt,id){
 
     document.querySelectorAll('.rsjm-tab-content')

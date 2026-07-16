@@ -19,6 +19,16 @@ if($status_filter){
 }
 
 /* ===========================
+   JOB TYPE TABS (All / New / Repair)
+=========================== */
+
+$type_filter = sanitize_text_field($_GET['job_type'] ?? '');
+
+if(in_array($type_filter, ['new','repair'], true)){
+    $where .= $wpdb->prepare(" AND j.job_type=%s", $type_filter);
+}
+
+/* ===========================
    SEARCH
 =========================== */
 
@@ -91,6 +101,20 @@ if(isset($_GET['export_csv'])){
 }
 
 /* ===========================
+   COUNTS FOR TABS
+=========================== */
+
+$count_all = $wpdb->get_var(
+    "SELECT COUNT(*) FROM {$wpdb->prefix}rsjm_jobs"
+);
+$count_new = $wpdb->get_var(
+    "SELECT COUNT(*) FROM {$wpdb->prefix}rsjm_jobs WHERE job_type='new'"
+);
+$count_repair = $wpdb->get_var(
+    "SELECT COUNT(*) FROM {$wpdb->prefix}rsjm_jobs WHERE job_type='repair'"
+);
+
+/* ===========================
    FETCH JOBS (WITH LIMIT)
 =========================== */
 
@@ -111,13 +135,55 @@ $jobs = $wpdb->get_results(
 );
 
 $total_pages = ceil($total_jobs / $per_page);
+
+/* Helper to build tab URLs while preserving search/status filters */
+if(!function_exists('rsjm_jobs_tab_url')){
+function rsjm_jobs_tab_url($type_value, $status_filter, $search){
+    $args = ['page' => 'rsjm-jobs'];
+
+    if($type_value !== ''){
+        $args['job_type'] = $type_value;
+    }
+    if($status_filter !== ''){
+        $args['status'] = $status_filter;
+    }
+    if($search !== ''){
+        $args['s'] = $search;
+    }
+
+    return admin_url('admin.php?' . http_build_query($args));
+}
+}
+
+$current_search = sanitize_text_field($_GET['s'] ?? '');
 ?>
 
 <div class="wrap">
 <h1>Jobs</h1>
 
+<!-- TABS: All / New / Repair -->
+<h2 class="nav-tab-wrapper" style="margin-bottom:15px;">
+    <a href="<?=esc_url(rsjm_jobs_tab_url('', $status_filter, $current_search))?>"
+       class="nav-tab <?= $type_filter === '' ? 'nav-tab-active' : '' ?>">
+        All <span class="count">(<?=intval($count_all)?>)</span>
+    </a>
+
+    <a href="<?=esc_url(rsjm_jobs_tab_url('new', $status_filter, $current_search))?>"
+       class="nav-tab <?= $type_filter === 'new' ? 'nav-tab-active' : '' ?>">
+        🛒 New <span class="count">(<?=intval($count_new)?>)</span>
+    </a>
+
+    <a href="<?=esc_url(rsjm_jobs_tab_url('repair', $status_filter, $current_search))?>"
+       class="nav-tab <?= $type_filter === 'repair' ? 'nav-tab-active' : '' ?>">
+        🔧 Repair <span class="count">(<?=intval($count_repair)?>)</span>
+    </a>
+</h2>
+
 <form method="get" style="margin-bottom:15px;">
     <input type="hidden" name="page" value="rsjm-jobs">
+    <?php if($type_filter !== ''): ?>
+        <input type="hidden" name="job_type" value="<?=esc_attr($type_filter)?>">
+    <?php endif; ?>
 
     <input type="text" name="s"
            placeholder="Search Job ID / Customer"
@@ -135,7 +201,7 @@ $total_pages = ceil($total_jobs / $per_page);
     <button class="button">Filter</button>
 
     <a class="button button-primary"
-       href="<?=admin_url('admin.php?page=rsjm-jobs&export_csv=1')?>">
+       href="<?=admin_url('admin.php?page=rsjm-jobs&export_csv=1'.($type_filter !== '' ? '&job_type='.urlencode($type_filter) : ''))?>">
        Export CSV
     </a>
 </form>
@@ -150,8 +216,10 @@ $total_pages = ceil($total_jobs / $per_page);
     <th>Customer</th>
     <th>Total</th>
     <th>Status</th>
+	<th>Payment Status</th>
 	<th>Type</th>
-    <th>Date</th>
+	<th>Created Date</th>
+    <th>Delivery Date</th>
     <th>Action</th>
 </tr>
 </thead>
@@ -166,6 +234,9 @@ $total_pages = ceil($total_jobs / $per_page);
     <td><span class="rsjm-status rsjm-status-<?=$job->status?>">
         <?=ucfirst($job->status)?>
     </span></td>
+	 <td><span class="rsjm-status rsjm-status-<?=$job->payment_status?>">
+        <?=ucfirst($job->payment_status)?>
+    </span></td>
 	<td>
 		<?php 
 			echo $job->job_type == 'new'
@@ -173,6 +244,7 @@ $total_pages = ceil($total_jobs / $per_page);
 			: '<span class="rsjm-badge rsjm-repair">Repair</span>'; 
 		?>
 	</td>
+	<td><?=date('d M Y',strtotime($job->created_at))?></td>
     <td><?=date('d M Y',strtotime($job->delivery_date))?></td>
     <td>
         <a class="button button-small"
@@ -207,7 +279,7 @@ $total_pages = ceil($total_jobs / $per_page);
     <div class="tablenav-pages">
         <?php for($i=1;$i<=$total_pages;$i++): ?>
             <a class="button <?=($i==$paged?'button-primary':'')?>"
-               href="<?=admin_url('admin.php?page=rsjm-jobs&paged='.$i)?>">
+               href="<?=admin_url('admin.php?page=rsjm-jobs&paged='.$i.($type_filter !== '' ? '&job_type='.urlencode($type_filter) : ''))?>">
                <?=$i?>
             </a>
         <?php endfor; ?>

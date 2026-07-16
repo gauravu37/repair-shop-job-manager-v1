@@ -47,6 +47,7 @@ register_activation_hook(__FILE__, function () {
         total DECIMAL(10,2),
         delivery_date DATE,
         status VARCHAR(20),
+		payment_status VARCHAR(20),
 		payment_method VARCHAR(20),
 		advance DECIMAL(10,2),
 		paid_amount DECIMAL(10,2),
@@ -595,6 +596,283 @@ add_action('admin_init', function () {
 
 });
 
+
+
+
+
+/* =====================================================================
+   PASTE #1 — Add this alongside your other admin_init save handlers
+   (e.g. right after the existing "rsjm_save_job" / "rsjm_add_payment"
+   admin_init block, or as its own add_action('admin_init', ...) call).
+
+   This mirrors rsjm_save_job's GST/discount/redeem math, but UPDATES
+   an existing job instead of inserting, and reconciles items + stock
+   by reverting old quantities to stock, wiping the old job_items rows,
+   then reinserting the submitted set (deducting fresh stock).
+===================================================================== */
+
+add_action('admin_init', function () {
+
+    if (!isset($_POST['rsjm_update_job_full'])) return;
+
+    if (
+        !isset($_POST['rsjm_nonce']) ||
+        !wp_verify_nonce($_POST['rsjm_nonce'], 'rsjm_update_job_full')
+    ) {
+        wp_die('Security check failed');
+    }
+
+    global $wpdb;
+
+    $job_id = intval($_POST['job_id']);
+    $job    = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d", $job_id
+    ));
+
+    if (!$job) wp_die('Job not found');
+
+    $customer_id = intval($_POST['customer_id']);
+
+    /* =========================
+       ITEM TOTALS
+    ========================= */
+    $subtotal = array_sum($_POST['total'] ?? []);
+
+    $gst_percent = floatval($_POST['gst_percent'] ?? 0);
+    $gst_type    = sanitize_text_field($_POST['gst_type'] ?? '');
+
+    /* ORDER DISCOUNT */
+    $discount_type  = sanitize_text_field($_POST['discount_type'] ?? 'amount');
+    $discount_value = floatval($_POST['discount_value'] ?? 0);
+
+    $discount_amount = ($discount_type === 'percent')
+        ? ($subtotal * $discount_value) / 100
+        : $discount_value;
+
+    if ($discount_amount > $subtotal) $discount_amount = $subtotal;
+
+    $taxable_amount = $subtotal - $discount_amount;
+
+    /* GST ON DISCOUNTED PRICE */
+    $cgst = $sgst = $igst = 0;
+
+    if ($gst_type === 'cgst_sgst') {
+        $cgst = $sgst = ($taxable_amount * $gst_percent / 100) / 2;
+    } elseif ($gst_type === 'igst') {
+        $igst = $taxable_amount * $gst_percent / 100;
+    }
+
+    $raw_total = $taxable_amount + $cgst + $sgst + $igst;
+
+    /* =========================
+       REDEEM POINTS
+       (allow re-using points already redeemed on this job)
+    ========================= */
+    $already_redeemed_for_job = intval($wpdb->get_var($wpdb->prepare(
+        "SELECT IFNULL(SUM(points),0) FROM {$wpdb->prefix}rsjm_points
+         WHERE job_id=%d AND type='redeem'", $job_id
+    )));
+
+    $available = rsjm_get_customer_points($customer_id) + $already_redeemed_for_job;
+
+    $redeem_points = intval($_POST['redeem_points'] ?? 0);
+    if ($redeem_points > $available) $redeem_points = $available;
+    if ($redeem_points < 0) $redeem_points = 0;
+
+    $redeem_discount = min($redeem_points, $raw_total);
+    $total = $raw_total - $redeem_discount;
+
+    $advance = floatval($_POST['advance'] ?? 0);
+
+    /* =========================
+       UPDATE THE JOB ROW
+    ========================= */
+    $wpdb->update($wpdb->prefix . 'rsjm_jobs', [
+        'customer_id'      => $customer_id,
+        'subtotal'         => $subtotal,
+        'gst_type'         => $gst_type,
+        'cgst'             => $cgst,
+        'sgst'             => $sgst,
+        'igst'             => $igst,
+        'total'            => $total,
+        'redeem_discount'  => $redeem_discount,
+        'advance'          => $advance,
+        'delivery_date'    => sanitize_text_field($_POST['delivery_date'] ?? ''),
+        'status'           => sanitize_text_field($_POST['job_status'] ?? $job->status),
+        'discount_type'    => $discount_type,
+        'discount_value'   => $discount_value,
+        'discount_amount'  => $discount_amount,
+        'courier_company'  => sanitize_text_field($_POST['courier_company'] ?? ''),
+        'tracking_number'  => sanitize_text_field($_POST['tracking_number'] ?? ''),
+        'tracking_website' => esc_url_raw($_POST['tracking_website'] ?? ''),
+        'tracking_link'    => esc_url_raw($_POST['tracking_link'] ?? ''),
+        'courier_date'     => sanitize_text_field($_POST['courier_date'] ?? ''),
+        'job_type'         => sanitize_text_field($_POST['job_type'] ?? $job->job_type),
+    ], ['id' => $job_id]);
+
+    /* =========================
+       REDEEM POINTS LOG
+       (replace this job's redeem entry with the new value)
+    ========================= */
+    $wpdb->delete($wpdb->prefix . 'rsjm_points', ['job_id' => $job_id, 'type' => 'redeem']);
+
+    if ($redeem_points > 0) {
+        $wpdb->insert($wpdb->prefix . 'rsjm_points', [
+            'customer_id' => $customer_id,
+            'job_id'      => $job_id,
+            'points'      => $redeem_points,
+            'type'        => 'redeem',
+            'note'        => "Redeemed in Job #$job_id (edited)",
+            'created_at'  => current_time('mysql'),
+        ]);
+    }
+
+    /* =========================
+       ADVANCE PAYMENT ROW
+       (upsert the single "Advance" payment tied to this job)
+    ========================= */
+    $advance_row_id = $wpdb->get_var($wpdb->prepare(
+        "SELECT id FROM {$wpdb->prefix}rsjm_payments
+         WHERE job_id=%d AND method='Advance' ORDER BY id ASC LIMIT 1",
+        $job_id
+    ));
+
+    if ($advance > 0) {
+        if ($advance_row_id) {
+            $wpdb->update($wpdb->prefix . 'rsjm_payments',
+                ['amount' => $advance],
+                ['id' => $advance_row_id]
+            );
+        } else {
+            rsjm_add_payment($job_id, $advance, 'Advance', 'Advance payment (edited)');
+        }
+    } elseif ($advance_row_id) {
+        $wpdb->delete($wpdb->prefix . 'rsjm_payments', ['id' => $advance_row_id]);
+    }
+
+    /* =========================
+       ITEMS: revert stock -> wipe -> reinsert -> deduct stock
+    ========================= */
+    if (rsjm_is_stock_enabled()) {
+        $old_items = $wpdb->get_results($wpdb->prepare(
+            "SELECT item_id, qty FROM {$wpdb->prefix}rsjm_job_items WHERE job_id=%d",
+            $job_id
+        ));
+
+        foreach ($old_items as $oi) {
+            $wpdb->query($wpdb->prepare(
+                "UPDATE {$wpdb->prefix}rsjm_items SET stock = stock + %d WHERE id=%d",
+                $oi->qty, $oi->item_id
+            ));
+        }
+    }
+
+    $wpdb->delete($wpdb->prefix . 'rsjm_job_items', ['job_id' => $job_id]);
+
+    foreach (($_POST['item_id'] ?? []) as $k => $item_id) {
+
+        $qty = intval($_POST['qty'][$k]);
+
+        if (rsjm_is_stock_enabled()) {
+            $current_stock = $wpdb->get_var($wpdb->prepare(
+                "SELECT stock FROM {$wpdb->prefix}rsjm_items WHERE id=%d", $item_id
+            ));
+
+            if ($qty > $current_stock) {
+                wp_die("❌ Not enough stock for item ID: $item_id (Available: $current_stock, Required: $qty)");
+            }
+        }
+
+        $image = $_POST['item_image'][$k] ?? '';
+
+        $wpdb->insert($wpdb->prefix . 'rsjm_job_items', [
+            'job_id'          => $job_id,
+            'item_id'         => $item_id,
+            'sku'             => $_POST['sku'][$k],
+            'qty'             => $qty,
+            'price'           => $_POST['price'][$k],
+            'disc_per'        => $_POST['discount_percent'][$k],
+            'disc_price'      => $_POST['discount_amount'][$k],
+            'total'           => $_POST['total'][$k],
+            'problem'         => $_POST['problem'][$k],
+            'replacement'     => isset($_POST['replacement'][$k]) ? 1 : 0,
+            'replacement_sku' => $_POST['replacement_sku'][$k],
+            'item_image'      => $image,
+        ]);
+
+        if (rsjm_is_stock_enabled()) {
+            $wpdb->query($wpdb->prepare(
+                "UPDATE {$wpdb->prefix}rsjm_items SET stock = stock - %d WHERE id=%d",
+                $qty, $item_id
+            ));
+
+            $wpdb->insert($wpdb->prefix . 'rsjm_stock_log', [
+                'item_id' => $item_id,
+                'job_id'  => $job_id,
+                'qty'     => $qty,
+                'type'    => 'out',
+                'note'    => "Job #$job_id edited",
+            ]);
+        }
+    }
+
+    /* =========================
+       SYNC PAID/PENDING + STATUS, NOTIFY
+    ========================= */
+    rsjm_sync_job_payments($job_id);
+    rsjm_auto_update_status($job_id);
+    rsjm_notify_status_change($job_id);
+
+    wp_redirect(admin_url('admin.php?page=rsjm-view-job&job_id=' . $job_id . '&updated=1'));
+    exit;
+});
+
+
+/* =====================================================================
+   PASTE #2 — Replace your existing select2-enqueue admin_enqueue_scripts
+   callback with this version, so the Edit Job page (rsjm-view-job) also
+   gets Select2 (it now uses the same item/customer dropdowns as Add Job).
+===================================================================== */
+
+add_action('admin_enqueue_scripts', function ($hook) {
+
+    if (
+        isset($_GET['page']) &&
+        in_array($_GET['page'], ['rsjm-add-job', 'rsjm-view-job'], true)
+    ) {
+        wp_enqueue_script('jquery');
+
+        wp_enqueue_style(
+            'select2-css',
+            'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css'
+        );
+
+        wp_enqueue_script(
+            'select2-js',
+            'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js',
+            ['jquery'],
+            null,
+            true
+        );
+    }
+});
+
+
+/* =====================================================================
+   PASTE #3 (OPTIONAL, run once) — the old view-job.php used a different
+   status vocabulary ('ready' / 'partial') than add-job.php
+   ('ready_to_deliver' / 'partial_paid'). The unified form now uses the
+   add-job vocabulary everywhere. If you have existing rows using the
+   old values, normalize them once:
+===================================================================== */
+
+/*
+global $wpdb;
+$wpdb->query("UPDATE {$wpdb->prefix}rsjm_jobs SET status='ready_to_deliver' WHERE status='ready'");
+$wpdb->query("UPDATE {$wpdb->prefix}rsjm_jobs SET status='partial_paid' WHERE status='partial'");
+*/
+
+
 /* ---------------- PDF ---------------- */
 
 function rsjm_generate_pdf($job_id) {
@@ -831,11 +1109,13 @@ function rsjm_notify_status_change($job_id){
        🔗 GENERATE PUBLIC LINK
     ============================== */
 
-    $api_url = "https://sugandhadiy.com/api/save-job.php";
-
+    //$api_url = "https://sugandhadiy.com/api/save-job.php";
+	$domain  = get_option('rsjm_invoice_domain') ?: 'https://prontoinfosys.net/';
+	$api_url = $domain . '/api/save-job.php';
 	//$attachment_id = get_option('rsjm_shop_logo'); // Replace with your actual image ID
     //$image_size = 'full';
 	//$image_url = wp_get_attachment_image_url( $attachment_id, $image_size );
+	$link = $domain . '/api/view.php?id=' . $res['token'];
     $data = [
         'job_id' => $job->id,
         'name'   => $user->display_name,
@@ -866,16 +1146,70 @@ function rsjm_notify_status_change($job_id){
         $res = json_decode(wp_remote_retrieve_body($response), true);
 
         if(!empty($res['token'])){
-            $link = "https://sugandhadiy.com/api/view.php?id=".$res['token'];
+			
+			$domain   = get_option('rsjm_invoice_domain') ?: 'https://prontoinfosys.net';			
+            $link = $domain ."/api/view.php?id=".$res['token'];
 
             // Append link in message
             $message .= "\n\nView Details: ".$link;
         }
     }
 
-    /* ==============================
+
+	/* ==============================
        📲 SEND WHATSAPP
     ============================== */
+ 
+    $url     = get_option('rsjm_waha_url').'/api/sendText';
+    $session = get_option('rsjm_waha_session');
+    $key     = get_option('rsjm_waha_key');
+ 
+    if(!$url || !$session || !$key) return;
+ 
+    $numbers = [];
+ 
+    $phone = preg_replace('/[^0-9]/','',$user->user_login);
+    if($phone) $numbers[] = $phone;
+ 
+    if(get_option('rsjm_send_alt_whatsapp')){
+        $alt_phone = get_user_meta($user->ID, 'altphone', true);
+        $alt_phone = preg_replace('/[^0-9]/','',$alt_phone);
+ 
+        if($alt_phone && !in_array($alt_phone, $numbers, true)){
+            $numbers[] = $alt_phone;
+        }
+    }
+ 
+    foreach($numbers as $number){
+ 
+        $chatId = "91{$number}@c.us";
+ 
+        $payload = [
+            'chatId' => $chatId,
+            'text'   => $message,
+            'session'=> 'default'
+        ];
+ 
+        $args = [
+            'body' => wp_json_encode($payload),
+            'headers' => [
+                'Content-Type' => 'application/json',
+                'X-API-Key'    => $key
+            ],
+            'timeout' => 20
+        ];
+ 
+        $resp = wp_remote_post($url, $args);
+ 
+        if(is_wp_error($resp)){
+            error_log("WAHA Error ({$number}): ".$resp->get_error_message());
+        }
+    }
+
+
+    /* ==============================
+       📲 SEND WHATSAPP
+    ============================== 
 
     $phone = preg_replace('/[^0-9]/','',$user->user_login);
 
@@ -907,7 +1241,7 @@ function rsjm_notify_status_change($job_id){
     // Optional debug
     if(is_wp_error($resp)){
         error_log("WAHA Error: ".$resp->get_error_message());
-    }
+    }*/
 }
 
 
@@ -1165,9 +1499,12 @@ function rsjm_parse_message($template, $job){
     $upi_link = '';
     if($upi){
         //$upi_link = "upi://pay?pa={$upi}&pn=RepairShop&am={$job->total}&cu=INR";
-		$upi_link ="https://sugandhadiy.com/api/pay.php?pa={$upi_id}&am={$job->total}&cu=INR&pn=RepairShop";
+		//$upi_link ="https://sugandhadiy.com/api/pay.php?pa={$upi_id}&am={$job->total}&cu=INR&pn=RepairShop";
 		//$upi_link = "https://sugandhadiy.com/api/pay.php?pa={$upi}&am={$job->total}&cu=INR&pn=RepairShop";
-    }
+   
+		$domain   = get_option('rsjm_invoice_domain') ?: 'https://prontoinfosys.net';
+		$upi_link = $domain . "/api/pay.php?pa={$upi}&am={$job->total}&cu=INR&pn=RepairShop";
+   }
 	
 	$fin = rsjm_get_job_financials($job->id);
 
@@ -1268,8 +1605,9 @@ add_shortcode('rsjm_customer_job', function(){
         : $job->subtotal;
 
     //$upi_link = "upi://pay?pa={$upi_id}&pn=" . urlencode($shop_name)&am={$amount}&cu=INR";
-	$upi_link =	"https://sugandhadiy.com/api/pay.php?pa={$upi}&am={$job->total}&cu=INR&pn=RepairShop";
-
+	//$upi_link =	"https://sugandhadiy.com/api/pay.php?pa={$upi}&am={$job->total}&cu=INR&pn=RepairShop";
+	$domain   = get_option('rsjm_invoice_domain') ?: 'https://prontoinfosys.net';
+	$upi_link = $domain . "/api/pay.php?pa={$upi}&am={$job->total}&cu=INR&pn=RepairShop";
     ob_start();
     ?>
 	<style>
@@ -1326,41 +1664,10 @@ add_shortcode('rsjm_customer_job', function(){
 });
 
 function rsjm_sync_job_payments($job_id){
-
-    global $wpdb;
-
-    $job = $wpdb->get_row(
-        $wpdb->prepare(
-            "SELECT total FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d",
-            $job_id
-        )
-    );
-
-    if(!$job) return;
-
-    $paid = $wpdb->get_var(
-        $wpdb->prepare(
-            "SELECT SUM(amount) FROM {$wpdb->prefix}rsjm_payments WHERE job_id=%d",
-            $job_id
-        )
-    );
-
-    $paid = $paid ? floatval($paid) : 0;
-
-    $pending = $job->total - $paid;
-    if($pending < 0) $pending = 0;
-
-    $status = $pending > 0 ? 'partial' : 'completed';
-
-    $wpdb->update(
-        $wpdb->prefix.'rsjm_jobs',
-        [
-            //'paid_amount'    => $paid,
-            //'pending_amount' => $pending,
-            'status'         => $status
-        ],
-        ['id'=>$job_id]
-    );
+    // Intentionally left as a no-op placeholder for backward
+    // compatibility with existing call sites. All status/payment
+    // syncing now happens in rsjm_auto_update_status().
+    return;
 }
 
 
@@ -1438,55 +1745,61 @@ function rsjm_get_job_financials($job_id){
 }
 
 
+ 
 function rsjm_auto_update_status($job_id){
-
+ 
     global $wpdb;
-
+ 
     $fin = rsjm_get_job_financials($job_id);
-
-    $status = $fin['pending'] > 0 ? 'partial' : 'completed';
-
+ 
+    $payment_status = 'pending';
+ 
+    if ($fin['total'] > 0 && $fin['paid'] <= 0) {
+        $payment_status = 'pending';
+    } elseif ($fin['pending'] > 0) {
+        $payment_status = 'partial';
+    } else {
+        $payment_status = 'paid';
+    }
+ 
     $wpdb->update(
         $wpdb->prefix.'rsjm_jobs',
-        ['status'=>$status],
-        ['id'=>$job_id]
+        ['payment_status' => $payment_status],
+        ['id' => $job_id]
     );
-
+ 
     /* ===============================
-       EARN POINTS WHEN COMPLETED
+       EARN POINTS WHEN FULLY PAID
+       (previously triggered on status === 'completed';
+       now correctly triggers on payment being fully settled,
+       independent of the job's workflow stage)
     =============================== */
-
-    if($status === 'completed'){
-
-        // Get job data
+ 
+    if ($payment_status === 'paid') {
+ 
         $job = $wpdb->get_row(
             $wpdb->prepare(
                 "SELECT customer_id, total FROM {$wpdb->prefix}rsjm_jobs WHERE id=%d",
                 $job_id
             )
         );
-
-        if(!$job) return;
-
-        // Prevent duplicate earning
+ 
+        if (!$job) return;
+ 
         $already = $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$wpdb->prefix}rsjm_points 
+                "SELECT COUNT(*) FROM {$wpdb->prefix}rsjm_points
                  WHERE job_id=%d AND type='earn'",
                  $job_id
             )
         );
-
-        if($already > 0) return;
-
-        //$points = floor($job->total / 100); // 1 point per ₹100
-		
-		$total = floatval($job->total);
-
-		// 5 points per 100
-		$points = floor($total / 100) * 5; // 5 point per ₹100
-
-        if($points > 0){
+ 
+        if ($already > 0) return;
+ 
+        $total = floatval($job->total);
+        $points = floor($total / 100) * 5; // 5 points per ₹100
+ 
+        if ($points > 0) {
             $wpdb->insert($wpdb->prefix.'rsjm_points',[
                 'customer_id'=>$job->customer_id,
                 'job_id'=>$job_id,

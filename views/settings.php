@@ -30,6 +30,9 @@ if (isset($_POST['rsjm_save_settings'])) {
 	update_option('rsjm_msg_partial', sanitize_textarea_field($_POST['msg_partial']));
 	update_option('enable_stock', isset($_POST['enable_stock']) ? 1 : 0);
 
+	update_option('rsjm_send_alt_whatsapp', isset($_POST['send_alt_whatsapp']) ? 1 : 0);
+	update_option('rsjm_invoice_domain', untrailingslashit(esc_url_raw($_POST['invoice_domain'])));
+
 
     echo '<div class="updated notice"><p>Settings Saved.</p></div>';
 }
@@ -45,6 +48,8 @@ $waha_sess   = get_option('rsjm_waha_session');
 $waha_key   = get_option('rsjm_waha_key');
 $logo_id     = get_option('rsjm_shop_logo');
 $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
+$send_alt_whatsapp = get_option('rsjm_send_alt_whatsapp');
+$invoice_domain    = get_option('rsjm_invoice_domain');
 ?>
 
 
@@ -116,6 +121,18 @@ $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
 		</label>
 	</div>
 
+	<div class="rsjm-field rsjm-full">
+		<label>Invoice / Public Link Domain</label>
+		<input type="text"
+		       name="invoice_domain"
+		       placeholder="https://sugandhadiy.com"
+		       value="<?php echo esc_attr($invoice_domain); ?>">
+		<p style="font-size:12px;color:#666;margin-top:4px;">
+			Used to build the public invoice/tracking link and API calls
+			(no trailing slash), e.g. <code>https://yourdomain.com</code>.
+		</p>
+	</div>
+
 </div>
 </div>
 
@@ -180,6 +197,14 @@ $logo_url    = $logo_id ? wp_get_attachment_url($logo_id) : '';
         <input name="waha_key"
                value="<?php echo esc_attr($waha_key); ?>">
     </div>
+
+	<div class="rsjm-field rsjm-full">
+		<label>
+			<input type="checkbox" name="send_alt_whatsapp" value="1"
+				<?php checked($send_alt_whatsapp, 1); ?> style="width:auto">
+			Also send WhatsApp message to customer's Alternate Number
+		</label>
+	</div>
 
 </div>
 
